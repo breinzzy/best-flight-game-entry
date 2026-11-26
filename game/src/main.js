@@ -42,7 +42,7 @@
     var xs = [-0.55, 0.5, -0.2, 0.65, -0.6, 0.15, -0.45, 0.6, -0.1, 0.45, -0.35, 0];
     var alts = [55, 80, 45, 95, 60, 110, 70, 85, 50, 100, 65, 45];
     for (var k = 0; k < spots.length; k++) {
-      RINGS.push({ seg: spots[k], x: xs[k], alt: alts[k], r: 1.1, hit: false, missed: false });
+      RINGS.push({ seg: spots[k], x: xs[k], alt: alts[k], r: 1.1, hit: false, missed: false, flashT: 0 });
     }
   })();
 
@@ -60,6 +60,7 @@
     score: 0, combo: 0, ringsHit: 0,
     timeLeft: 180, elapsed: 0,
     msg: '', msgT: 0, flash: 0,
+    fuel: 100, vsi: 0, gear: 'DN', flaps: 2, windKt: 12, windDir: 'NW',
     muted: false, started: false,
     camBob: 0,
   };
@@ -76,6 +77,9 @@
   }
   var palms = []; // island palm billboards: {seg, side}
   for (var p = 0; p < 60; p++) palms.push({ seg: 20 + Math.floor(rng() * 560), side: rng() < 0.5 ? -1 : 1, s: 0.7 + rng() * 0.6 });
+  var popups = []; // floating "+250" score popups: {x, y, text, t, max}
+  var birds = []; // distant birds: {x, y, s, ph}
+  for (var b = 0; b < 9; b++) birds.push({ x: rng(), y: 0.07 + rng() * 0.22, s: 5 + rng() * 7, ph: rng() * 6 });
 
   // ---------- helpers ----------
   function clamp(v, a, b) { return v < a ? a : v > b ? b : v; }
@@ -93,7 +97,8 @@
     G.screen = 'play'; G.pos = 0; G.x = 0; G.alt = 70; G.pitch = 0; G.roll = 0;
     G.heading = 268; G.speed = 120; G.throttle = 0.55;
     G.score = 0; G.combo = 0; G.ringsHit = 0; G.timeLeft = 180; G.elapsed = 0;
-    RINGS.forEach(function (r) { r.hit = false; r.missed = false; });
+    G.fuel = 100; G.vsi = 0; G.gear = 'DN'; G.flaps = 2; popups.length = 0;
+    RINGS.forEach(function (r) { r.hit = false; r.missed = false; r.flashT = 0; });
     showMsg('RING 1 AHEAD — THREAD THE GLOWING RINGS', 3);
     audio().unlock(); audio().click();
   }
@@ -136,6 +141,12 @@
     // advance along the circuit
     G.pos += (G.speed * dt) / SEG * 0.9;
     G.camBob += dt * 6;
+    // fuel burn + vertical speed
+    G.fuel = Math.max(0, G.fuel - dt * (0.05 + G.throttle * 0.10));
+    G.vsi = lerp(G.vsi, -G.pitch * (60 + speed01 * 120) * 12, 1 - Math.pow(0.05, dt));
+    // ring flash + score popups decay
+    RINGS.forEach(function (r) { if (r.flashT > 0) r.flashT -= dt; });
+    for (var pi = popups.length - 1; pi >= 0; pi--) { popups[pi].t -= dt; if (popups[pi].t <= 0) popups.splice(pi, 1); }
 
     // ground collision
     var segIdx = Math.floor(G.pos) % TOTAL;
@@ -160,6 +171,9 @@
           r.hit = true; G.ringsHit++; G.combo++;
           var pts = 250 + (G.combo - 1) * 50;
           G.score += pts;
+          r.flashT = 0.9;
+          var rp = project((r.seg - G.pos) * SEG, r.alt / 50, r.x, G.alt / 50 + 0.35);
+          popups.push({ x: rp.x, y: rp.y, text: '+' + pts, t: 1.4, max: 1.4 });
           audio().ring();
           showMsg('RING ' + G.ringsHit + ' / 12  +' + pts + (G.combo > 1 ? '  COMBO x' + G.combo : ''), 1.8);
           if (G.ringsHit === 12) showMsg('ALL RINGS CLEAR — FINAL APPROACH: LAND ON THE RUNWAY', 3.5);
@@ -219,10 +233,22 @@
       ctx.fill();
     });
     // far mountain ridges (parallax with heading)
-    drawRidge(ridge2, hy, '#5d3f78', 0.35);
-    drawRidge(ridge1, hy, '#3c2a5e', 0.7);
+    drawRidge(ridge2, hy, '#5d3f78', 0.35, 56);
+    drawRidge(ridge1, hy, '#3c2a5e', 0.7, 92);
+    // distant birds
+    birds.forEach(function (bd, i) {
+      var bx = ((bd.x * W + G.elapsed * (10 + i % 4) * 1.2) % (W + 120)) - 60;
+      var by = bd.y * H + Math.sin(G.elapsed * 2 + bd.ph) * 4;
+      var flap = Math.sin(G.elapsed * 6 + bd.ph) * bd.s * 0.3;
+      ctx.strokeStyle = 'rgba(40,24,52,0.75)'; ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(bx - bd.s, by - flap);
+      ctx.lineTo(bx, by);
+      ctx.lineTo(bx + bd.s, by - flap);
+      ctx.stroke();
+    });
   }
-  function drawRidge(ridge, hy, color, par) {
+  function drawRidge(ridge, hy, color, par, snowLine) {
     var off = (G.heading * par * 6) % 90;
     ctx.fillStyle = color; ctx.beginPath(); ctx.moveTo(-4, hy + 2);
     for (var i = 0; i < 90; i++) {
@@ -230,6 +256,105 @@
       ctx.lineTo(x, hy - ridge[(i + Math.floor(off / 1)) % 90] * 0.9);
     }
     ctx.lineTo(W + 4, hy + 2); ctx.closePath(); ctx.fill();
+    // snow caps on the tallest peaks
+    if (snowLine) {
+      ctx.fillStyle = 'rgba(255,244,230,0.92)';
+      for (var j = 0; j < 90; j++) {
+        var idx = (j + Math.floor(off)) % 90;
+        var h = ridge[idx];
+        if (h > snowLine && h > ridge[(idx + 89) % 90] && h >= ridge[(idx + 1) % 90]) {
+          var px = (j * (W + 8) / 89) - off;
+          var py = hy - h * 0.9;
+          ctx.beginPath();
+          ctx.moveTo(px - 9, py + 4); ctx.lineTo(px, py - 8); ctx.lineTo(px + 9, py + 4);
+          ctx.closePath(); ctx.fill();
+        }
+      }
+    }
+  }
+
+  // ---------- landmarks ----------
+  function drawLighthouse(ix, iy, w, ih) {
+    var baseY = iy - ih * 0.45;
+    var lh = Math.max(30, w * 4.2), tw = Math.max(8, w * 0.5);
+    // rock base
+    ctx.fillStyle = '#5a5148';
+    ctx.beginPath(); ctx.ellipse(ix, baseY, tw * 1.6, tw * 0.5, 0, 0, 7); ctx.fill();
+    // striped tower
+    ctx.fillStyle = '#f7f9ff'; ctx.fillRect(ix - tw / 2, baseY - lh, tw, lh);
+    ctx.fillStyle = '#e2574c';
+    ctx.fillRect(ix - tw / 2, baseY - lh * 0.72, tw, lh * 0.2);
+    ctx.fillRect(ix - tw / 2, baseY - lh * 0.32, tw, lh * 0.2);
+    // gallery + lamp
+    ctx.fillStyle = '#23262e'; ctx.fillRect(ix - tw * 0.8, baseY - lh - lh * 0.1, tw * 1.6, lh * 0.1);
+    ctx.save();
+    ctx.shadowColor = '#ffe9a8'; ctx.shadowBlur = 16;
+    ctx.fillStyle = '#fff3c4';
+    ctx.beginPath(); ctx.arc(ix, baseY - lh - lh * 0.05, Math.max(3, tw * 0.42), 0, 7); ctx.fill();
+    ctx.restore();
+    // sweeping beam
+    var ba = -0.55 + Math.sin(G.elapsed * 0.6) * 0.45;
+    var bl = w * 9, bw = w * 2.0;
+    ctx.save();
+    ctx.translate(ix, baseY - lh - lh * 0.05); ctx.rotate(ba);
+    var bg = ctx.createLinearGradient(0, 0, bl, 0);
+    bg.addColorStop(0, 'rgba(255,233,168,0.20)'); bg.addColorStop(1, 'rgba(255,233,168,0)');
+    ctx.fillStyle = bg;
+    ctx.beginPath(); ctx.moveTo(0, -bw * 0.12); ctx.lineTo(bl, -bw * 0.5); ctx.lineTo(bl, bw * 0.5); ctx.lineTo(0, bw * 0.12); ctx.closePath(); ctx.fill();
+    ctx.restore();
+  }
+  function drawTown(ix, iy, w, ih) {
+    var baseY = iy - ih * 0.4;
+    var spans = [1.4, 2.6, 1.9, 3.1, 2.2, 1.3, 2.5];
+    var totalW = spans.length * w * 0.55;
+    var bx = ix - totalW / 2;
+    spans.forEach(function (hf, k) {
+      var bw = w * 0.55, bh = Math.max(6, hf * w);
+      ctx.fillStyle = k % 2 ? '#241f33' : '#2e2742';
+      ctx.fillRect(bx, baseY - bh, bw - 1, bh);
+      // lit windows
+      ctx.fillStyle = 'rgba(255,210,122,0.95)';
+      var rows = Math.max(1, Math.floor(bh / (w * 0.55)));
+      for (var r = 0; r < rows; r++) {
+        var wy = baseY - bh + w * 0.2 + r * w * 0.55;
+        if (wy + w * 0.16 > baseY) continue;
+        if ((k + r) % 2 === 0) ctx.fillRect(bx + bw * 0.2, wy, Math.max(1.5, w * 0.1), Math.max(1.5, w * 0.14));
+        if ((k + r) % 3 === 0) ctx.fillRect(bx + bw * 0.6, wy + w * 0.12, Math.max(1.5, w * 0.1), Math.max(1.5, w * 0.14));
+      }
+      bx += bw;
+    });
+  }
+  function drawRunwayExtras(camY) {
+    // PAPI: 4 lights left of the runway, 2 red + 2 white on glidepath
+    var rel = 608 - G.pos;
+    if (rel > 2 && rel < 70) {
+      var p = project(rel * SEG, 8 / 25, 0, camY);
+      for (var i = 0; i < 4; i++) {
+        var lx = p.x - p.w * 1.5 - i * p.w * 0.34;
+        var ly = p.y - p.w * 0.55;
+        var ls = Math.max(2.5, p.w * 0.22);
+        ctx.save();
+        ctx.shadowColor = i < 2 ? '#ff3b30' : '#ffffff'; ctx.shadowBlur = 8;
+        ctx.fillStyle = i < 2 ? '#ff3b30' : '#ffffff';
+        ctx.fillRect(lx - ls / 2, ly - ls / 2, ls, ls);
+        ctx.restore();
+      }
+    }
+    // windsock right of the runway
+    var rel2 = 640 - G.pos;
+    if (rel2 > 2 && rel2 < 70) {
+      var p2 = project(rel2 * SEG, 8 / 25, 1.7, camY);
+      var hgt = Math.max(10, p2.w * 2.6);
+      ctx.strokeStyle = '#d8d8d8'; ctx.lineWidth = Math.max(1.5, p2.w * 0.08);
+      ctx.beginPath(); ctx.moveTo(p2.x, p2.y); ctx.lineTo(p2.x, p2.y - hgt); ctx.stroke();
+      var sl = Math.max(10, p2.w * 1.8);
+      ctx.save(); ctx.translate(p2.x, p2.y - hgt); ctx.rotate(0.35);
+      ctx.fillStyle = '#ff7a2a';
+      ctx.beginPath(); ctx.moveTo(0, -sl * 0.18); ctx.lineTo(sl, -sl * 0.05); ctx.lineTo(sl, sl * 0.05); ctx.lineTo(0, sl * 0.18); ctx.closePath(); ctx.fill();
+      ctx.fillStyle = '#fff';
+      ctx.fillRect(sl * 0.45, -sl * 0.13, sl * 0.2, sl * 0.26);
+      ctx.restore();
+    }
   }
 
   function drawWorld() {
@@ -240,6 +365,18 @@
     sea.addColorStop(0, '#e8955a'); sea.addColorStop(0.25, '#7a5a7e');
     sea.addColorStop(0.6, '#274b73'); sea.addColorStop(1, '#12294a');
     ctx.fillStyle = sea; ctx.fillRect(0, hy, W, H - hy);
+
+    // sun reflection column on the water
+    var refl = ctx.createLinearGradient(0, hy, 0, H);
+    refl.addColorStop(0, 'rgba(255,190,100,0.22)'); refl.addColorStop(1, 'rgba(255,190,100,0)');
+    ctx.fillStyle = refl; ctx.fillRect(W * 0.72 - 140, hy, 280, H - hy);
+    // soft cloud shadows drifting on the sea
+    clouds.forEach(function (cl, i) {
+      var cx = ((cl.x * W + G.elapsed * (4 + i % 5) * 0.4 + G.heading * 2) % (W + 260)) - 130;
+      var sy = hy + 26 + ((i * 67) % Math.max(40, (H - hy - 40)));
+      ctx.fillStyle = 'rgba(8,16,44,0.13)';
+      ctx.beginPath(); ctx.ellipse(cx, sy, cl.s * 0.85, cl.s * 0.18, 0, 0, 7); ctx.fill();
+    });
 
     // sun glitter on the sea
     ctx.fillStyle = 'rgba(255,200,110,0.20)';
@@ -272,6 +409,8 @@
           ctx.beginPath(); ctx.ellipse(ix, p1.y, iw, ih, 0, 0, 7); ctx.fill();
           ctx.fillStyle = '#4d7a3f';
           ctx.beginPath(); ctx.ellipse(ix, p1.y, iw * 0.78, ih * 0.72, 0, 0, 7); ctx.fill();
+          if (idx === 318 && side === -1) drawLighthouse(ix, p1.y, p1.w, ih);
+          if (idx === 452 && side === 1) drawTown(ix, p1.y, p1.w, ih);
         });
       }
       // ground strip (sea lane — always water, islands sit beside it)
@@ -298,6 +437,8 @@
         ctx.beginPath(); ctx.arc(p1.x + rw, p1.y, Math.max(1.5, p1.w * 0.09), 0, 7); ctx.fill();
       }
     }
+    // runway extras: PAPI lights + windsock (billboards near the runway)
+    drawRunwayExtras(camY);
     // palms on near island segments
     palms.forEach(function (pl) {
       var rel = pl.seg - G.pos;
@@ -321,7 +462,25 @@
     // rings far -> near
     for (var ri = RINGS.length - 1; ri >= 0; ri--) {
       var r = RINGS[ri];
-      if (r.hit) continue;
+      if (r.hit) {
+        // just-passed ring flashes gold briefly
+        if (r.flashT > 0) {
+          var fz = (r.seg - G.pos) * SEG;
+          if (fz > 6 && fz < DRAW * SEG) {
+            var fp = project(fz, r.alt / 50, r.x, camY);
+            var fr = fp.w * r.r;
+            if (fr >= 2) {
+              ctx.save();
+              ctx.globalAlpha = clamp(r.flashT / 0.9, 0, 1);
+              ctx.shadowColor = '#ffd24a'; ctx.shadowBlur = 30;
+              ctx.strokeStyle = '#ffd24a'; ctx.lineWidth = Math.max(3, fr * 0.12);
+              ctx.beginPath(); ctx.arc(fp.x, fp.y, fr, 0, 7); ctx.stroke();
+              ctx.restore();
+            }
+          }
+        }
+        continue;
+      }
       var rz = (r.seg - G.pos) * SEG;
       if (rz < 6 || rz > DRAW * SEG) continue;
       var rp = project(rz, r.alt / 50, r.x, camY);
@@ -350,20 +509,35 @@
     var px = W / 2 + G.roll * 26;
     var py = H * 0.66 + G.pitch * 22;
     var bank = G.roll * 0.42 + (mouse.active ? 0 : 0);
+    // soft shadow on the sea below the aircraft
+    ctx.fillStyle = 'rgba(10,20,50,0.22)';
+    ctx.beginPath(); ctx.ellipse(px + 34, py + 118, 120, 16, 0, 0, 7); ctx.fill();
     ctx.save();
     ctx.translate(px, py);
     ctx.rotate(bank);
-    ctx.scale(1 + Math.abs(G.roll) * 0.06, 1);
-    // shadow on the sea below (fake, cheap)
-    // prop blur disc
-    ctx.fillStyle = 'rgba(220,230,255,0.20)';
-    ctx.beginPath(); ctx.ellipse(0, -6, 74, 30, 0, 0, 7); ctx.fill();
+    ctx.scale((1 + Math.abs(G.roll) * 0.06) * 1.28, 1.28);
+    // spinning prop at the nose: blur disc + blades + spinner
+    ctx.fillStyle = 'rgba(225,235,255,0.20)';
+    ctx.beginPath(); ctx.ellipse(0, -46, 54, 12, 0, 0, 7); ctx.fill();
+    var pa = G.elapsed * 18;
+    ctx.strokeStyle = 'rgba(255,255,255,0.75)'; ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.moveTo(-Math.cos(pa) * 50, -46 - Math.sin(pa) * 10);
+    ctx.lineTo(Math.cos(pa) * 50, -46 + Math.sin(pa) * 10);
+    ctx.moveTo(-Math.cos(pa + 1.57) * 50, -46 - Math.sin(pa + 1.57) * 10);
+    ctx.lineTo(Math.cos(pa + 1.57) * 50, -46 + Math.sin(pa + 1.57) * 10);
+    ctx.stroke();
+    ctx.fillStyle = '#e2574c';
+    ctx.beginPath(); ctx.arc(0, -52, 6, 0, 7); ctx.fill();
     // wings
     ctx.fillStyle = '#e8ecf4';
     ctx.beginPath(); ctx.moveTo(-14, -2); ctx.lineTo(-168, 26); ctx.lineTo(-168, 40); ctx.lineTo(-10, 16); ctx.closePath(); ctx.fill();
     ctx.beginPath(); ctx.moveTo(14, -2); ctx.lineTo(168, 26); ctx.lineTo(168, 40); ctx.lineTo(10, 16); ctx.closePath(); ctx.fill();
     ctx.fillStyle = '#c33';
-    ctx.fillRect(-172, 26, 10, 6); ctx.fillRect(162, 26, 10, 6);
+    ctx.fillRect(-174, 24, 14, 8); ctx.fillRect(160, 24, 14, 8);
+    // wing stripes
+    ctx.fillStyle = 'rgba(226,87,76,0.85)';
+    ctx.fillRect(-128, 20, 8, 12); ctx.fillRect(120, 20, 8, 12);
     // fuselage
     var fg = ctx.createLinearGradient(0, -26, 0, 26);
     fg.addColorStop(0, '#f7f9ff'); fg.addColorStop(0.5, '#dfe6f2'); fg.addColorStop(1, '#9fb0c9');
@@ -378,6 +552,9 @@
     // stripe
     ctx.fillStyle = '#e2574c';
     ctx.beginPath(); ctx.moveTo(-16, -6); ctx.quadraticCurveTo(0, -2, 16, -6); ctx.lineTo(15, 2); ctx.quadraticCurveTo(0, 6, -15, 2); ctx.closePath(); ctx.fill();
+    // fuselage panel lines
+    ctx.strokeStyle = 'rgba(60,70,100,0.25)'; ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(-14, 12); ctx.lineTo(14, 12); ctx.moveTo(-13, 22); ctx.lineTo(13, 22); ctx.stroke();
     // cockpit windows, lit
     ctx.fillStyle = '#ffd27a';
     ctx.beginPath(); ctx.ellipse(-7, -30, 6, 9, -0.25, 0, 7); ctx.fill();
@@ -395,6 +572,43 @@
     ctx.fillStyle = blink ? '#39ff88' : '#0e5c2e';
     ctx.beginPath(); ctx.arc(168, 33, 4, 0, 7); ctx.fill();
     ctx.restore();
+  }
+
+  function drawMinimap() {
+    var mx = W - 182, my = 74, mw = 168, mh = 110;
+    ctx.fillStyle = 'rgba(8,14,34,0.62)';
+    ctx.fillRect(mx, my, mw, mh);
+    ctx.strokeStyle = 'rgba(255,255,255,0.18)'; ctx.lineWidth = 1;
+    ctx.strokeRect(mx + 0.5, my + 0.5, mw - 1, mh - 1);
+    ctx.fillStyle = 'rgba(120,240,255,0.9)'; ctx.font = 'bold 10px system-ui, sans-serif'; ctx.textAlign = 'left';
+    ctx.fillText('MAP', mx + 8, my + 14);
+    var px0 = mx + 10, px1 = mx + mw - 10, py = my + 58;
+    function mapX(seg) { return px0 + (seg / TOTAL) * (px1 - px0); }
+    // island dots along the chain
+    ctx.fillStyle = 'rgba(120,200,110,0.85)';
+    for (var s = 0; s < TOTAL; s += 12) {
+      if (segs[s].h > 2) { ctx.beginPath(); ctx.arc(mapX(s), py + Math.sin(s * 0.11) * 12, 2.2, 0, 7); ctx.fill(); }
+    }
+    // runway
+    ctx.fillStyle = '#7dff9e';
+    ctx.fillRect(mapX(RW_START), py - 3, mapX(RW_END) - mapX(RW_START), 6);
+    ctx.fillStyle = 'rgba(255,255,255,0.75)'; ctx.font = '9px system-ui, sans-serif'; ctx.textAlign = 'center';
+    ctx.fillText('RWY', mapX((RW_START + RW_END) / 2), py + 20);
+    // rings: hit gold, next pulsing cyan, future dim
+    RINGS.forEach(function (r, i) {
+      var rx = mapX(r.seg), ry = py + Math.sin(r.seg * 0.11) * 12;
+      if (r.hit) { ctx.fillStyle = '#ffd24a'; ctx.beginPath(); ctx.arc(rx, ry, 2.6, 0, 7); ctx.fill(); }
+      else if (i === G.ringsHit) {
+        var pulse = 3.5 + Math.sin(G.elapsed * 5) * 1.2;
+        ctx.strokeStyle = '#37f2ff'; ctx.lineWidth = 1.5;
+        ctx.beginPath(); ctx.arc(rx, ry, pulse, 0, 7); ctx.stroke();
+        ctx.fillStyle = '#37f2ff'; ctx.beginPath(); ctx.arc(rx, ry, 2.2, 0, 7); ctx.fill();
+      } else { ctx.fillStyle = 'rgba(120,240,255,0.5)'; ctx.beginPath(); ctx.arc(rx, ry, 2, 0, 7); ctx.fill(); }
+    });
+    // plane marker
+    var plx = mapX(G.pos), ply = py + Math.sin(G.pos * 0.11) * 12;
+    ctx.fillStyle = '#fff';
+    ctx.beginPath(); ctx.moveTo(plx + 6, ply); ctx.lineTo(plx - 4, ply - 4); ctx.lineTo(plx - 4, ply + 4); ctx.closePath(); ctx.fill();
   }
 
   function drawHUD() {
@@ -436,18 +650,62 @@
     ctx.fillText(fmt(G.score), W - 22, 52);
     ctx.font = 'bold 20px "SF Mono", Consolas, monospace';
     ctx.fillText(fmt(Math.max(0, G.timeLeft)) + 's', W - 150, 50);
-    // throttle bar (left)
-    ctx.fillStyle = 'rgba(8,14,34,0.55)'; ctx.fillRect(18, H - 190, 26, 150);
-    ctx.fillStyle = '#37f2ff'; ctx.fillRect(22, H - 44 - 142 * G.throttle, 18, 142 * G.throttle);
-    ctx.fillStyle = 'rgba(255,255,255,0.8)'; ctx.font = 'bold 11px system-ui, sans-serif'; ctx.textAlign = 'left';
-    ctx.fillText('THR', 18, H - 200);
-    ctx.fillText(fmt(G.throttle * 100) + '%', 52, H - 44 - 142 * G.throttle + 4);
-    // altimeter tape (right)
-    ctx.fillStyle = 'rgba(8,14,34,0.55)'; ctx.fillRect(W - 44, H - 190, 26, 150);
-    var alt01 = clamp(G.alt / 420, 0, 1);
-    ctx.fillStyle = '#ffc46b'; ctx.fillRect(W - 40, H - 44 - 142 * alt01, 18, 142 * alt01);
-    ctx.fillStyle = 'rgba(255,255,255,0.8)'; ctx.textAlign = 'right';
-    ctx.fillText('ALT', W - 18, H - 200);
+    // mission header (left, under the top bar)
+    var nextRing = G.ringsHit >= 12 ? 12 : G.ringsHit + 1;
+    ctx.textAlign = 'left';
+    ctx.fillStyle = '#ffd27a'; ctx.font = 'bold 21px system-ui, sans-serif';
+    ctx.fillText('ISLAND HOPPER', 22, 100);
+    var hw = ctx.measureText('ISLAND HOPPER').width;
+    ctx.fillStyle = '#fff'; ctx.font = 'bold 27px system-ui, sans-serif';
+    ctx.fillText(G.ringsHit >= 12 ? '— MISSION COMPLETE' : '— RING ' + nextRing + ' / 12', 22 + hw + 12, 100);
+    ctx.fillStyle = 'rgba(255,255,255,0.88)'; ctx.font = '14px system-ui, sans-serif';
+    ctx.fillText('SCORE ' + G.score.toLocaleString('en-US') + '   ·   WIND ' + G.windKt + ' KT ' + G.windDir + '   ·   GEAR ' + G.gear + '   ·   FLAPS ' + G.flaps + '   ·   THR ' + fmt(G.throttle * 100) + '%   ·   FUEL ' + fmt(G.fuel) + '%', 22, 122);
+    // minimap (top-right, under the top bar)
+    drawMinimap();
+    // six-gauge strip along the bottom
+    var stripY = H - 86, stripH = 80;
+    ctx.fillStyle = 'rgba(8,14,34,0.62)';
+    ctx.fillRect(W / 2 - 312, stripY, 624, stripH);
+    ctx.strokeStyle = 'rgba(255,255,255,0.14)'; ctx.lineWidth = 1;
+    ctx.strokeRect(W / 2 - 311.5, stripY + 0.5, 623, stripH - 1);
+    var gauges = [
+      { label: 'ALT', frac: clamp(G.alt / 420, 0, 1), value: fmt(Math.max(0, G.alt * 12)), color: '#ffc46b', mode: 'std' },
+      { label: 'SPD', frac: clamp(G.speed / 300, 0, 1), value: fmt(G.speed), color: '#37f2ff', mode: 'std' },
+      { label: 'HDG', frac: G.heading / 360, value: pad3(G.heading), color: '#aef4ff', mode: 'hdg' },
+      { label: 'VSI', frac: clamp(G.vsi / 2000, -1, 1), value: (G.vsi >= 0 ? '+' : '') + fmt(G.vsi), color: '#7dff9e', mode: 'vsi' },
+      { label: 'THR', frac: G.throttle, value: fmt(G.throttle * 100) + '%', color: '#7dff9e', mode: 'std' },
+      { label: 'FUEL', frac: clamp(G.fuel / 100, 0, 1), value: fmt(G.fuel) + '%', color: G.fuel < 25 ? '#ff5a4e' : '#ffb347', mode: 'std' },
+    ];
+    gauges.forEach(function (g, i) {
+      var gx = W / 2 - 260 + i * 104, gy = H - 44, gr = 23;
+      ctx.fillStyle = 'rgba(120,240,255,0.9)'; ctx.font = 'bold 10px system-ui, sans-serif'; ctx.textAlign = 'center';
+      ctx.fillText(g.label, gx, gy - gr - 6);
+      ctx.fillStyle = 'rgba(4,8,22,0.72)';
+      ctx.beginPath(); ctx.arc(gx, gy, gr, 0, 7); ctx.fill();
+      ctx.strokeStyle = 'rgba(255,255,255,0.35)'; ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.arc(gx, gy, gr, 0, 7); ctx.stroke();
+      var tickAngles = [];
+      if (g.mode === 'hdg') tickAngles = [-90, 0, 90, 180];
+      else if (g.mode === 'vsi') tickAngles = [-210, -150, -90, -30, 30];
+      else for (var t = 0; t <= 8; t++) tickAngles.push(135 + t * 33.75);
+      ctx.strokeStyle = 'rgba(255,255,255,0.55)';
+      tickAngles.forEach(function (deg) {
+        var ta = deg * Math.PI / 180;
+        ctx.beginPath();
+        ctx.moveTo(gx + Math.cos(ta) * (gr - 4), gy + Math.sin(ta) * (gr - 4));
+        ctx.lineTo(gx + Math.cos(ta) * (gr - 1), gy + Math.sin(ta) * (gr - 1));
+        ctx.stroke();
+      });
+      var na;
+      if (g.mode === 'hdg') na = (G.heading - 90) * Math.PI / 180;
+      else if (g.mode === 'vsi') na = (-90 + g.frac * 120) * Math.PI / 180;
+      else na = (135 + g.frac * 270) * Math.PI / 180;
+      ctx.strokeStyle = g.color; ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.moveTo(gx, gy); ctx.lineTo(gx + Math.cos(na) * (gr - 6), gy + Math.sin(na) * (gr - 6)); ctx.stroke();
+      ctx.fillStyle = g.color; ctx.beginPath(); ctx.arc(gx, gy, 2.5, 0, 7); ctx.fill();
+      ctx.fillStyle = '#fff'; ctx.font = 'bold 11px "SF Mono", Consolas, monospace';
+      ctx.fillText(g.value, gx, gy + 13);
+    });
     // artificial horizon mini-gauge (bottom centre-left)
     var gx = 150, gy = H - 96, gr = 42;
     ctx.save(); ctx.beginPath(); ctx.arc(gx, gy, gr, 0, 7); ctx.clip();
@@ -467,7 +725,7 @@
       var fl = Math.floor(G.elapsed * 3) % 2 === 0;
       if (fl) {
         ctx.fillStyle = '#ff3b30'; ctx.font = 'bold 26px system-ui, sans-serif'; ctx.textAlign = 'center';
-        ctx.fillText('⚠ PULL UP — TERRAIN ⚠', W / 2, 110);
+        ctx.fillText('⚠ PULL UP — TERRAIN ⚠', W / 2, 168);
       }
     }
     // message banner
@@ -475,13 +733,25 @@
       G.msgT -= 1 / 60;
       ctx.fillStyle = 'rgba(8,14,34,0.6)';
       var mw = ctx.measureText(G.msg).width + 36;
-      ctx.fillRect(W / 2 - mw / 2, 78, mw, 34);
+      ctx.fillRect(W / 2 - mw / 2, 132, mw, 34);
       ctx.fillStyle = '#aef4ff'; ctx.font = 'bold 16px system-ui, sans-serif'; ctx.textAlign = 'center';
-      ctx.fillText(G.msg, W / 2, 101);
+      ctx.fillText(G.msg, W / 2, 155);
     }
+    // floating score popups
+    popups.forEach(function (p) {
+      var a = clamp(p.t / p.max, 0, 1);
+      var py = p.y - (p.max - p.t) * 34;
+      ctx.save();
+      ctx.globalAlpha = a;
+      ctx.shadowColor = '#ffd24a'; ctx.shadowBlur = 18;
+      ctx.fillStyle = '#ffd24a';
+      ctx.font = 'bold 30px system-ui, sans-serif'; ctx.textAlign = 'center';
+      ctx.fillText(p.text, p.x, py);
+      ctx.restore();
+    });
     // controls hint
     ctx.fillStyle = 'rgba(255,255,255,0.65)'; ctx.font = '13px system-ui, sans-serif'; ctx.textAlign = 'center';
-    ctx.fillText('← → bank   ↑ ↓ climb / descend   SHIFT throttle up   CTRL throttle down   M sound   P pause   R restart', W / 2, H - 14);
+    ctx.fillText('← → bank   ↑ ↓ climb / descend   SHIFT throttle up   CTRL throttle down   M sound   P pause   R restart', W / 2, H - 94);
   }
 
   function overlayPanel(title, lines, accent) {
@@ -568,21 +838,34 @@
       window.__shotMode = true; // freeze the sim: the staged frame is the shot
       if (name === 'start') { G.screen = 'title'; G.elapsed = 6; G.pos = 180; return; }
       startGame();
-      if (name === 'play') {
-        G.pos = 556; G.alt = 62; G.x = -0.3; G.roll = -0.28; G.pitch = -0.06;
+      if (name === 'cover') {
+        // final-ring close pass: ring 12 huge ahead, runway + PAPI behind it
+        G.pos = 603; G.alt = 45; G.x = 0; G.roll = 0.06; G.pitch = 0.02;
+        G.throttle = 0.78; G.speed = 212; G.ringsHit = 11; G.combo = 3; G.score = 4850;
+        G.timeLeft = 58; G.elapsed = 142; G.fuel = 82; G.vsi = 120;
+        RINGS.forEach(function (r, i) { if (i < 11) r.hit = true; });
+        popups.push({ x: 830, y: 400, text: '+300', t: 1.0, max: 1.4 });
+        showMsg('FINAL RING — THREAD IT AND LAND', 99);
+      } else if (name === 'play') {
+        // mid-circuit sunset: coastal town lit on the right, snowy ridges
+        G.pos = 444; G.alt = 62; G.x = -0.3; G.roll = -0.28; G.pitch = -0.06;
         G.throttle = 0.8; G.speed = 235; G.ringsHit = 9; G.combo = 3; G.score = 2650;
-        G.timeLeft = 96; G.elapsed = 84;
+        G.timeLeft = 96; G.elapsed = 84; G.fuel = 74; G.vsi = 180;
         RINGS.forEach(function (r, i) { if (i < 9) r.hit = true; });
         showMsg('RING 10 / 12  +300  COMBO x3', 99);
       } else if (name === 'ring') {
-        G.pos = 308; G.alt = 58; G.x = 0.55; G.roll = 0.3; G.pitch = 0.04;
+        // low pass on the coast: ring 5 close, lighthouse island on the left
+        G.pos = 306; G.alt = 55; G.x = -0.55; G.roll = 0.3; G.pitch = 0.04;
         G.throttle = 0.72; G.speed = 218; G.ringsHit = 4; G.combo = 2; G.score = 1150;
-        G.timeLeft = 131; G.elapsed = 52;
+        G.timeLeft = 131; G.elapsed = 52; G.fuel = 88; G.vsi = -150;
         RINGS.forEach(function (r, i) { if (i < 4) r.hit = true; });
+        popups.push({ x: 745, y: 385, text: '+300', t: 0.8, max: 1.4 });
         showMsg('RING 5 / 12  +300  COMBO x2', 99);
       } else if (name === 'end') {
         G.screen = 'win'; G.score = 5420; G.ringsHit = 12; G.landBonus = 1480;
-        G.pos = 640; G.alt = 10; G.throttle = 0.2; G.speed = 118; G.timeLeft = 58;
+        G.pos = 600; G.alt = 10; G.throttle = 0.2; G.speed = 118; G.timeLeft = 58;
+        G.fuel = 61; G.vsi = -220; G.elapsed = 150;
+        RINGS.forEach(function (r) { r.hit = true; });
         G.msg = ''; G.msgT = 0;
       }
       render();
