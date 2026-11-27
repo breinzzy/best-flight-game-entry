@@ -7,7 +7,7 @@
   function stage() {
     var q = new URLSearchParams(location.search);
     var shot = q.get('shot');
-    if (!shot) return;
+    if (!shot || window.__shotStaged) return;
     if (window.SkyShots) {
       window.SkyShots.stage(shot);
       window.__shotStaged = true;
