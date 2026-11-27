@@ -326,7 +326,7 @@ function hud(t){const W=hc.width,H=hc.height,s=dpr;ctx.clearRect(0,0,W,H);if(sta
  ctx.fillStyle=C.fuelKg<BINGO_KG?'#ff4b3a':'#ffc25a';ctx.fillRect(28*s,106*s,(PW-56*s)*Math.max(0,C.fuelKg/C.tankKg),7*s);
  txt(`GEAR ${gearDown?'DN':'UP'}   ·   ${done?'► Land on Runway 36 and stop':P.grounded&&gateIx===0?'► Take off from Runway 36':`► Fly through ring ${gateIx+1}`}${srt.weather==='storm'?'   ·   WIND 270° 14 KT':''}`,28*s,132*s,12,'#e8f4ff');
  if(best)txt('BEST CAMPAIGN '+best.toLocaleString('en-US'),28*s,150*s,11,G);
- txt(`${camMode?'COCKPIT':'CHASE'} VIEW · C`,W-18*s,30*s,12,G,'right');txt(muted?'SOUND OFF · M':'SOUND ON · M',W-18*s,48*s,12,G,'right');
+ txt(`${camMode?'COCKPIT':'CHASE'} VIEW · C`,W-48*s,30*s,12,G,'right');txt(muted?'SOUND OFF · M':'SOUND ON · M',W-48*s,48*s,12,G,'right');
  const wy=H*.25;
  if(state==='fly'&&!P.grounded&&P.v<42&&Math.floor(t/250)%2)txt('STALL',W/2,wy,30,'#ff4b3a','center',true);
  else if(state==='fly'&&!P.grounded&&aglFt<250&&vsS<-6&&Math.floor(t/250)%2)txt('PULL UP',W/2,wy,30,'#ff4b3a','center',true);

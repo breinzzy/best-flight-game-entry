@@ -111,14 +111,17 @@ export function buildCockpit() {
   const add = (mesh, x = 0, y = 0, z = 0) => { mesh.position.set(x, y, z); g.add(mesh); return mesh; };
 
   // Glareshield: the dark brow above the panel, seen against the sky.
-  const shield = add(new THREE.Mesh(new THREE.BoxGeometry(2.0, 0.09, 0.4), darker), 0, -0.08, -1.02);
+  const shield = add(new THREE.Mesh(new THREE.BoxGeometry(1.7, 0.09, 0.4), darker), 0, -0.06, -1.02);
   shield.rotation.x = 0.18;
   // Instrument panel: slightly curved feel from a wide box, tilted back.
-  const panel = add(new THREE.Mesh(new THREE.BoxGeometry(1.95, 0.58, 0.1), dark), 0, -0.44, -1.12);
+  // (v8 fix: 1.95 m wide / y -0.44 put the outer dials off-frame left/right
+  // and cut the dial bottoms — the 55° camera only sees ~±0.85 m at the
+  // panel depth. Panel is now 1.65 m wide and raised so all six faces fit.)
+  const panel = add(new THREE.Mesh(new THREE.BoxGeometry(1.65, 0.5, 0.1), dark), 0, -0.36, -1.12);
   panel.rotation.x = -0.14;
   // Panel top rail + bottom lip.
-  add(new THREE.Mesh(new THREE.BoxGeometry(1.95, 0.05, 0.12), darker), 0, -0.14, -1.1).rotation.x = -0.14;
-  add(new THREE.Mesh(new THREE.BoxGeometry(1.95, 0.04, 0.1), darker), 0, -0.73, -1.16).rotation.x = -0.14;
+  add(new THREE.Mesh(new THREE.BoxGeometry(1.65, 0.05, 0.12), darker), 0, -0.10, -1.1).rotation.x = -0.14;
+  add(new THREE.Mesh(new THREE.BoxGeometry(1.65, 0.04, 0.1), darker), 0, -0.62, -1.16).rotation.x = -0.14;
 
   // Six dials across the panel, faces slightly in front of the panel surface.
   const dials = [];
@@ -131,13 +134,13 @@ export function buildCockpit() {
     const c = dialCanvas();
     const tex = new THREE.CanvasTexture(c);
     tex.anisotropy = 4;
-    const m = new THREE.Mesh(new THREE.CircleGeometry(0.155, 32),
+    const m = new THREE.Mesh(new THREE.CircleGeometry(0.13, 32),
       new THREE.MeshBasicMaterial({ map: tex, transparent: true }));
-    m.position.set(-0.75 + i * 0.3, -0.44, -1.06);
+    m.position.set(-0.65 + i * 0.26, -0.36, -1.06);
     m.rotation.x = -0.14;
     g.add(m);
     // Bezel ring around each dial.
-    const bez = new THREE.Mesh(new THREE.TorusGeometry(0.158, 0.012, 8, 32),
+    const bez = new THREE.Mesh(new THREE.TorusGeometry(0.132, 0.01, 8, 32),
       new THREE.MeshStandardMaterial({ color: 0x4b5866, roughness: .4, metalness: .7 }));
     bez.position.copy(m.position); bez.rotation.x = -0.14;
     g.add(bez);
@@ -147,39 +150,39 @@ export function buildCockpit() {
   // Fuel strip under the panel: a thin bar that drains with the tank.
   const fuelCanvas = dialCanvas();
   const fuelTex = new THREE.CanvasTexture(fuelCanvas);
-  const fuelBar = new THREE.Mesh(new THREE.PlaneGeometry(0.9, 0.07),
+  const fuelBar = new THREE.Mesh(new THREE.PlaneGeometry(0.8, 0.06),
     new THREE.MeshBasicMaterial({ map: fuelTex, transparent: true }));
-  fuelBar.position.set(0, -0.78, -1.14);
+  fuelBar.position.set(0, -0.66, -1.14);
   fuelBar.rotation.x = -0.14;
   g.add(fuelBar);
 
   // Yoke: column + wheel, centred below the panel.
-  const col = add(new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.04, 0.5, 8), dark), 0, -0.62, -0.85);
+  const col = add(new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.04, 0.5, 8), dark), 0, -0.68, -0.85);
   col.rotation.x = 0.5;
-  const yoke = add(new THREE.Mesh(new THREE.TorusGeometry(0.17, 0.025, 10, 24), dark), 0, -0.52, -0.72);
+  const yoke = add(new THREE.Mesh(new THREE.TorusGeometry(0.17, 0.025, 10, 24), dark), 0, -0.60, -0.72);
   yoke.rotation.x = 0.35;
-  add(new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.05, 0.05), darker), 0, -0.52, -0.72);
+  add(new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.05, 0.05), darker), 0, -0.60, -0.72);
 
   // Canopy frame: two A-pillars + top crossbar, framing the windscreen.
   // Pillars sit just outside the outer dials so they never cover a face.
   for (const s of [-1, 1]) {
-    const pil = add(new THREE.Mesh(new THREE.BoxGeometry(0.07, 1.5, 0.07), dark), s * 1.06, 0.35, -1.05);
+    const pil = add(new THREE.Mesh(new THREE.BoxGeometry(0.07, 1.5, 0.07), dark), s * 0.95, 0.35, -1.05);
     pil.rotation.z = -s * 0.10;
     // Side console with three lit switches.
-    const con = add(new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.3, 0.5), dark), s * 0.97, -0.70, -0.85);
+    const con = add(new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.3, 0.5), dark), s * 0.88, -0.62, -0.85);
     con.rotation.x = 0.1;
     const cols = [[0.3, 1, 0.5], [1, 0.8, 0.3], [0.3, 1, 0.5]];
     for (let i = 0; i < 3; i++) {
       const dot = new THREE.Mesh(new THREE.SphereGeometry(0.014, 8, 6),
         new THREE.MeshBasicMaterial({ color: new THREE.Color(cols[i][0] * 2, cols[i][1] * 2, cols[i][2] * 2) }));
-      dot.position.set(s * 0.97, -0.63 - i * 0.07, -0.58);
+      dot.position.set(s * 0.88, -0.55 - i * 0.07, -0.58);
       g.add(dot);
     }
   }
-  const bar = add(new THREE.Mesh(new THREE.BoxGeometry(2.0, 0.07, 0.07), dark), 0, 1.02, -1.05);
+  const bar = add(new THREE.Mesh(new THREE.BoxGeometry(1.8, 0.07, 0.07), dark), 0, 1.02, -1.05);
   bar.rotation.z = 0;
   // Windscreen glass hint: a very faint tinted plane high up, so the frame reads.
-  const ws = add(new THREE.Mesh(new THREE.PlaneGeometry(1.9, 0.9),
+  const ws = add(new THREE.Mesh(new THREE.PlaneGeometry(1.7, 0.9),
     new THREE.MeshBasicMaterial({ color: 0x88aacc, transparent: true, opacity: 0.04, side: THREE.DoubleSide, depthWrite: false })),
     0, 0.55, -1.08);
   ws.material.color.setRGB(0.5, 0.65, 0.8);
