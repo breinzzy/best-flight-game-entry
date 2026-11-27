@@ -1,14 +1,16 @@
-// SKYLINE RUNNER — Island Hopper. main.ts
+// SKYLINE RUNNER — Sunset Rally (v7, Three.js r160 renderer). main.ts
 // The entry program (Node 22, standard library only): the game is this directory's
 // game/ folder, plain static files a desktop browser loads offline (game/index.html
-// and its plain scripts, no library and no network request), and the program hands it
-// in. It copies game/ and screenshots/ from beside this file to /output and writes
+// loads the Three.js renderer from game/src/; Three.js r160 is vendored locally
+// under game/vendor/ — no CDN, no network request), and the program hands it in.
+// It copies game/ and screenshots/ from beside this file to /output and writes
 // /output/dossier.json, the summary the judge reads, with the vendored make.fun
-// library. The game itself: a sunset flight circuit over an island chain — chase
+// library. The game itself: a sunset flight rally over a 3D island — chase or cockpit
 // view, the aircraft in frame with instruments lit, a runway ahead, altitude,
-// speed and heading on the HUD. Thread 12 glowing target rings, then land on the
-// runway before the timer runs out. Keyboard (arrows, Shift/Ctrl, P, M, R) and
-// mouse; sounds are synthesised in the browser, no audio files.
+// speed and heading on the HUD. Take off from Runway 36, thread 12 glowing target
+// rings, then land on the runway — beat the 180 s par for the time bonus. Keyboard
+// (arrows, Shift/R/Z/F, G, C, P, M) and mouse; sounds are synthesised in the browser,
+// no audio files.
 //
 // Serve it locally with `node serve.ts`, then open http://localhost:8080.
 // Outside the grader's container, MAKEFUN_OUTPUT_DIR stands in for /output:
@@ -26,12 +28,13 @@ mkdirSync(out, { recursive: true });
 cpSync(join(here, 'game'), join(out, 'game'), { recursive: true });
 mkdirSync(join(out, 'screenshots'), { recursive: true });
 // Screenshots (screenshots/, first by name is the cover — the judge's contact
-// sheet shows it large on top): 1-cover.png the title screen over the sunset
-// circuit (aircraft in frame, island chain and runway lane ahead), 2-ring.png
-// a close ring pass low over the islands, palms and the HUD lit, 3-play.png
-// mid-circuit with ring 10 ahead and the runway approach in sight, 4-end.png
-// the touchdown panel after a clean landing. All four are real renders of
-// game/src/shots.js staged scenes, taken in desktop Chrome.
+// sheet shows it large on top): 1-cover.jpg the take-off roll on Runway 36 at
+// sunset (chase view, aircraft in frame, runway lane ahead), 2-ring.jpg a banked
+// ring pass over the coast with the sea and shoreline in frame and a +500 popup,
+// 3-play.jpg the cockpit view over the sea toward a ring and the island,
+// 4-end.jpg the "Touchdown." debrief with the landed aircraft and runway lights
+// beside the score card. All four are real renders of the game's own ?shot=
+// staged scenes, taken in desktop Chrome.
 if (existsSync(join(here, 'screenshots'))) cpSync(join(here, 'screenshots'), join(out, 'screenshots'), { recursive: true });
 
 // The scorer's own caps (reference/gate.json): only text_max_bytes shapes the bytes; the others refuse an entry the
