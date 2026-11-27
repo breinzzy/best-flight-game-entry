@@ -1,16 +1,19 @@
-// SKYLINE RUNNER — Sunset Rally (v7, Three.js r160 renderer). main.ts
+// SKYLINE RUNNER — Campaign (v8, Three.js r160 renderer). main.ts
 // The entry program (Node 22, standard library only): the game is this directory's
 // game/ folder, plain static files a desktop browser loads offline (game/index.html
 // loads the Three.js renderer from game/src/; Three.js r160 is vendored locally
 // under game/vendor/ — no CDN, no network request), and the program hands it in.
 // It copies game/ and screenshots/ from beside this file to /output and writes
 // /output/dossier.json, the summary the judge reads, with the vendored make.fun
-// library. The game itself: a sunset flight rally over a 3D island — chase or cockpit
-// view, the aircraft in frame with instruments lit, a runway ahead, altitude,
-// speed and heading on the HUD. Take off from Runway 36, thread 12 glowing target
-// rings, then land on the runway — beat the 180 s par for the time bonus. Keyboard
-// (arrows, Shift/R/Z/F, G, C, P, M) and mouse; sounds are synthesised in the browser,
-// no audio files.
+// library. The game itself: a 3-sortie sunset flight campaign over a 3D island —
+// chase or real 3D cockpit view, the aircraft in frame with instruments lit, a
+// runway ahead, altitude, speed and heading on the HUD. One tank of fuel shared
+// across the campaign, airframe damage, turnaround refits and feats: Sortie 1
+// Sunset Rally (12 rings, 180 s par), Sortie 2 North Coast Slalom (10 low gates,
+// speed bonus), Sortie 3 Storm Approach (6 rings in a crosswind, PAPI landing
+// in the rain) — each with its own debrief and glidepath graph. Keyboard
+// (arrows, Shift/R/Z/F, G, C, P, M, 1/2/3) and mouse; sounds are synthesised
+// in the browser, no audio files.
 //
 // Serve it locally with `node serve.ts`, then open http://localhost:8080.
 // Outside the grader's container, MAKEFUN_OUTPUT_DIR stands in for /output:
@@ -31,9 +34,9 @@ mkdirSync(join(out, 'screenshots'), { recursive: true });
 // sheet shows it large on top): 1-cover.jpg the take-off roll on Runway 36 at
 // sunset (chase view, aircraft in frame, runway lane ahead), 2-ring.jpg a banked
 // ring pass over the coast with the sea and shoreline in frame and a +500 popup,
-// 3-play.jpg the cockpit view over the sea toward a ring and the island,
-// 4-end.jpg the "Touchdown." debrief with the landed aircraft and runway lights
-// beside the score card. All four are real renders of the game's own ?shot=
+// 3-play.jpg the real 3D cockpit view over the sea toward a ring and the island,
+// 4-end.jpg the "CAMPAIGN COMPLETE" debrief with the landed aircraft and runway
+// lights beside the score card. All four are real renders of the game's own ?shot=
 // staged scenes, taken in desktop Chrome.
 if (existsSync(join(here, 'screenshots'))) cpSync(join(here, 'screenshots'), join(out, 'screenshots'), { recursive: true });
 
