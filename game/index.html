@@ -2,20 +2,47 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>SKYLINE RUNNER — Island Hopper</title>
+<title>SKYLINE RUNNER — Sunset Rally</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Ccircle cx='8' cy='8' r='7' fill='%23ff7a3c'/%3E%3C/svg%3E">
 <style>
-  html, body { margin: 0; padding: 0; background: #0b1026; height: 100%; overflow: hidden; }
-  #wrap { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; }
-  canvas { width: 100vw; height: 100vh; display: block; image-rendering: auto; }
-  #hint { position: fixed; left: 12px; bottom: 10px; color: rgba(255,255,255,.55);
-    font: 12px/1.5 system-ui, sans-serif; letter-spacing: .04em; user-select: none; pointer-events: none; }
+html,body{margin:0;height:100%;overflow:hidden;background:#b8d1eb;font-family:"Segoe UI",system-ui,sans-serif;user-select:none}
+canvas{position:absolute;left:0;top:0;width:100%;height:100%;display:block}
+#ov{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;background:radial-gradient(ellipse at center,rgba(5,15,30,.35),rgba(5,10,20,.8));color:#e8f4ff;z-index:5;text-align:center;cursor:pointer}
+#ov.hide{display:none}
+#ov .box{max-width:660px;padding:30px 42px;border:1px solid rgba(255,210,122,.4);border-radius:18px;background:rgba(20,10,30,.72);box-shadow:0 0 40px rgba(255,150,60,.18)}
+h1{margin:0;font-size:54px;letter-spacing:8px;color:#ffd27a;text-shadow:0 0 18px rgba(255,150,60,.6)}
+.sub{opacity:.85;margin:6px 0 18px;letter-spacing:3px;font-size:13px}
+#ovmsg{font-size:20px;margin:0 0 14px;color:#ffd27a}
+table{margin:0 auto;border-collapse:collapse;font-size:14px}
+td{padding:3px 12px;text-align:left}td:first-child{color:#ffd27a;text-align:right;font-weight:600}
+.go{margin-top:20px;font-size:18px;color:#7CFFB2;animation:p 1.2s infinite}
+@keyframes p{50%{opacity:.35}}
 </style>
 </head>
 <body>
-<div id="wrap"><canvas id="game" width="1280" height="720"></canvas></div>
+<canvas id="gl"></canvas><canvas id="hud" tabindex="0" style="outline:none"></canvas>
+<div id="ov"><div class="box">
+<h1>SKYLINE RUNNER</h1>
+<div class="sub">SUNSET RALLY · 12 GLOWING RINGS · ONE RUNWAY HOME</div>
+<div id="ovmsg">Take off from Runway 36, thread 12 glowing rings over the island, then land — beat the 180 s par for the time bonus.</div>
+<table>
+<tr><td>Pitch</td><td>W / S &nbsp;or&nbsp; ↑ / ↓ &nbsp;(S = nose up)</td></tr>
+<tr><td>Roll</td><td>A / D &nbsp;or&nbsp; ← / →</td></tr>
+<tr><td>Rudder</td><td>Q / E</td></tr>
+<tr><td>Throttle</td><td>Shift / R up &nbsp;·&nbsp; Z / F down &nbsp;or&nbsp; mouse wheel</td></tr>
+<tr><td>Gear</td><td>G &nbsp;(down for landing — gear up on touchdown is a crash)</td></tr>
+<tr><td>Mouse</td><td>hold left button and move to fly</td></tr>
+<tr><td>Brakes</td><td>Space</td></tr>
+<tr><td>Camera / Pause</td><td>C &nbsp;(chase / cockpit) &nbsp;·&nbsp; P &nbsp;(pause)</td></tr>
+<tr><td>Sound / Restart</td><td>M &nbsp;/&nbsp; Enter</td></tr>
+</table>
+<div class="go" id="ovgo">Press ENTER or click to fly</div>
+</div></div>
+<script type="importmap">
+{"imports": {"three": "./vendor/three.module.js", "three/addons/": "./vendor/addons/"}}
+</script>
+<script type="module" src="./src/main.js"></script>
 <script src="./src/shots.js"></script>
-<script src="./src/audio.js"></script>
-<script src="./src/main.js"></script>
 </body>
 </html>
