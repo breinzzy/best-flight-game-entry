@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>SKYLINE RUNNER — Sunset Rally</title>
+<title>SKYLINE RUNNER — Campaign</title>
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Ccircle cx='8' cy='8' r='7' fill='%23ff7a3c'/%3E%3C/svg%3E">
 <style>
@@ -11,7 +11,7 @@ canvas{position:absolute;left:0;top:0;width:100%;height:100%;display:block}
 #ov{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;background:radial-gradient(ellipse at center,rgba(5,15,30,.35),rgba(5,10,20,.8));color:#e8f4ff;z-index:5;text-align:center;cursor:pointer}
 #ov.hide{display:none}
 #ov .box{max-width:660px;padding:30px 42px;border:1px solid rgba(255,210,122,.4);border-radius:18px;background:rgba(20,10,30,.72);box-shadow:0 0 40px rgba(255,150,60,.18)}
-h1{margin:0;font-size:54px;letter-spacing:8px;color:#ffd27a;text-shadow:0 0 18px rgba(255,150,60,.6)}
+h1{margin:0;font-size:54px;letter-spacing:8px;color:#ffd27a;text-shadow:0 0 18px rgba(255,150,60,.6);font-family:Georgia,'Times New Roman',serif;font-style:italic}
 .sub{opacity:.85;margin:6px 0 18px;letter-spacing:3px;font-size:13px}
 #ovmsg{font-size:20px;margin:0 0 14px;color:#ffd27a}
 table{margin:0 auto;border-collapse:collapse;font-size:14px}
@@ -24,8 +24,8 @@ td{padding:3px 12px;text-align:left}td:first-child{color:#ffd27a;text-align:righ
 <canvas id="gl"></canvas><canvas id="hud" tabindex="0" style="outline:none"></canvas>
 <div id="ov"><div class="box">
 <h1>SKYLINE RUNNER</h1>
-<div class="sub">SUNSET RALLY · 12 GLOWING RINGS · ONE RUNWAY HOME</div>
-<div id="ovmsg">Take off from Runway 36, thread 12 glowing rings over the island, then land — beat the 180 s par for the time bonus.</div>
+<div class="sub">CAMPAIGN · 3 SORTIES · 28 RINGS · FUEL + DAMAGE · 3D COCKPIT</div>
+<div id="ovmsg">Three sorties, one tank of fuel. Fly the rally, thread the canyon gates, land the storm approach — bring all three home.</div>
 <table>
 <tr><td>Pitch</td><td>W / S &nbsp;or&nbsp; ↑ / ↓ &nbsp;(S = nose up)</td></tr>
 <tr><td>Roll</td><td>A / D &nbsp;or&nbsp; ← / →</td></tr>
@@ -34,6 +34,7 @@ td{padding:3px 12px;text-align:left}td:first-child{color:#ffd27a;text-align:righ
 <tr><td>Gear</td><td>G &nbsp;(down for landing — gear up on touchdown is a crash)</td></tr>
 <tr><td>Mouse</td><td>hold left button and move to fly</td></tr>
 <tr><td>Brakes</td><td>Space</td></tr>
+<tr><td>Refit / BINGO</td><td>1 / 2 / 3 &nbsp;(pick a refit · answer the BINGO call)</td></tr>
 <tr><td>Camera / Pause</td><td>C &nbsp;(chase / cockpit) &nbsp;·&nbsp; P &nbsp;(pause)</td></tr>
 <tr><td>Sound / Restart</td><td>M &nbsp;/&nbsp; Enter</td></tr>
 </table>
