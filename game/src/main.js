@@ -1,10 +1,11 @@
-// SKYLINE RUNNER v7 — Sunset Rally (Three.js r160 port of the v6 raw-WebGL2 game).
-// Gameplay kept verbatim from v6: Kestrel Ridge flight model + Skyline Runner
-// scoring (12 rings, combo, 180 s par, gear, stall, crash, landing bonus,
-// glidepath trace + TOUCHDOWN debrief). Only the renderer changed: see
-// render3d.js (Three.js, vendored in game/vendor/). Static files only, no
-// network requests. Runs as an ES module: <script type="module">.
-import { initRenderer, renderFrame } from './render3d.js';
+// SKYLINE RUNNER v8 — Campaign (Three.js r160). The v7 Sunset Rally, rebuilt
+// as a campaign: 3 sorties with different goals, one tank of fuel, airframe
+// damage, turnaround refits, feats, and a real 3D cockpit. Gameplay core
+// (flight model, rings, PAPI, landing) kept from v7; the campaign rules live
+// in campaign.js, the debrief model in debrief.js, the cockpit in cockpit3d.js.
+import { initRenderer, renderFrame, rebuildRings } from './render3d.js';
+import { SORTIES, REFITS, FEATS, BINGO_KG, FEAT_POINTS, newCampaign, hasRefit, burnMul, thrustMul, windMul, damageMul, stallDelta, ringBonus, flareBonus, fuelBurnRate, refitOffer, applyRefit, awardFeat, featsEarned, featById, campaignTotal } from './campaign.js';
+import { landingRows, glidepath, sortieRows, campaignRows } from './debrief.js';
 
 'use strict';
 window.addEventListener('error',e=>{const g=document.getElementById('ovgo');if(g)g.textContent='Error: '+(e.message||e.error)+' @'+e.lineno+':'+e.colno;});
@@ -66,11 +67,18 @@ function tcol(x,z,h,sl){
  return c.map(v=>clamp(v+r,0,1));
 }
 
-// ---------- gates ----------
-const GP=[[0,-1500],[800,-2700],[2200,-3300],[3500,-2400],[3900,-800],[3200,800],[2000,1900],[400,2700],[-1300,2500],[-2600,1200],[-2400,-800],[0,800]];
-const gates=GP.map((p,i)=>{const g=Math.max(groundAt(p[0],p[1]),0);const y=i===GP.length-1?Math.max(g+120,120):Math.max(g+220,180);return {p:[p[0],y,p[1]]};}); // last ring = final approach fix, low over the threshold
-gates.forEach((g,i)=>{const prev=i?gates[i-1].p:[0,0,560],next=i<gates.length-1?gates[i+1].p:[0,0,0];
- let d=i===gates.length-1?[0,0,-1]:sub(next,prev);d=norm([d[0],0,d[2]]);g.d=d;const Y=[0,1,0];g.M=basisM(cross(Y,d),Y,d,g.p);});
+// ---------- gates (rebuilt per sortie — each sortie flies a different set) ----------
+const GP=SORTIES[0].gp; // the Sunset Rally gates (v7's set, verbatim)
+const gates=[];
+function buildGates(s){
+  const built=s.gp.map((p,i)=>{const g=Math.max(groundAt(p[0],p[1]),0);
+    const y=i===s.gp.length-1?Math.max(g+120,120):(s.low?Math.max(g+90,120):Math.max(g+220,180));
+    return {p:[p[0],y,p[1]]};});
+  built.forEach((g,i)=>{const prev=i?built[i-1].p:[0,0,560],next=i<built.length-1?built[i+1].p:[0,0,0];
+    let d=i===built.length-1?[0,0,-1]:sub(next,prev);d=norm([d[0],0,d[2]]);g.d=d;const Y=[0,1,0];g.M=basisM(cross(Y,d),Y,d,g.p);});
+  gates.length=0;for(const g of built)gates.push(g);
+}
+buildGates(SORTIES[0]);
 
 // ---------- minimap ----------
 const mini=document.createElement('canvas');mini.width=mini.height=200;
@@ -99,13 +107,32 @@ function boom(){if(!AC||muted)return;const b=AC.createBuffer(1,AC.sampleRate*1.6
 let warnT=0;
 
 // ================= game state =================
-const TIME_LIMIT=180;
+let TIME_LIMIT=180; // per-sortie par, set by startSortie
 const P={},keys={},mouse={down:false,x:0,y:0};
-let state='title',camMode=0,gateIx=0,tRun=0,msg='',msgT=0,fx=[],shake=0,best=(()=>{try{return +(localStorage.getItem('sr_best')||0)}catch(e){return 0}})(),result='',propA=0,vsS=0,touchVs=0;
-let score=0,combo=0,ringsScore=0,gearDown=true,popups=[],trace=[],traceT=0,landBd=null,smoke=[],smokeT=0,touchX=0;
+let state='dispatch',camMode=0,gateIx=0,tRun=0,msg='',msgT=0,fx=[],shake=0,best=(()=>{try{return +(localStorage.getItem('sr_best_campaign')||0)}catch(e){return 0}})(),result='',propA=0,vsS=0,touchVs=0;
+let score=0,combo=0,ringsScore=0,gearDown=true,popups=[],trace=[],traceT=0,landBd=null,smoke=[],smokeT=0,touchX=0,sortieSpeed=0;
+const C=newCampaign(); // campaign: fuel, airframe, refits, feats (campaign.js)
+let refitChoices=[],bingoOpen=false,bingoSaid=false;
 function reset(){Object.assign(P,{pos:[0,RWY.y+2.2,560],F:[0,0,-1],U:[0,1,0],R:[1,0,0],v:0,thr:0,grounded:true,vs:0});
- gateIx=0;tRun=0;fx=[];result='';RG.camPos=[0,RWY.y+12,600];score=0;combo=0;ringsScore=0;gearDown=true;popups=[];trace=[];traceT=0;landBd=null;smoke=[];touchVs=0;touchX=0;
+ gateIx=0;tRun=0;fx=[];result='';RG.camPos=[0,RWY.y+12,600];score=0;combo=0;ringsScore=0;gearDown=true;popups=[];trace=[];traceT=0;landBd=null;smoke=[];touchVs=0;touchX=0;sortieSpeed=0;
+ bingoOpen=false;bingoSaid=false;C.straightIn=false;C.incidents=0;C.maxCombo=0;
  say('Throttle up (Shift / R), rotate at 75 kt with S',5);}
+
+// ---------- campaign flow ----------
+function startSortie(si){
+  C.sortie=si;const s=SORTIES[si];
+  buildGates(s);TIME_LIMIT=s.par;rebuildRings(RG);
+  C.bingoAnswered=false;C.bingoPressedOn=false;C.straightIn=false;C.incidents=0;C.maxCombo=0;
+  say(`SORTIE ${si+1}/3 — ${s.name}: ${s.brief}`,5);
+}
+function flySortie(si){startSortie(si);reset();state='fly';ov.classList.add('hide');}
+function advanceAfterDebrief(){
+  const si=C.sortie;
+  if(C.failed){newCampaignStart();return;}
+  if(si>=SORTIES.length-1){showCampaignDone();return;}
+  refitChoices=refitOffer(C);showRefit();
+}
+function newCampaignStart(){Object.assign(C,newCampaign());showDispatch();}
 function say(t,d=3){msg=t;msgT=d;}
 function ortho(){P.F=norm(P.F);P.R=norm(cross(P.F,P.U));P.U=norm(cross(P.R,P.F));}
 function rotAll(k,a,which){for(const w of which)P[w]=rot(P[w],k,a);}
@@ -118,6 +145,12 @@ function update(dt){
  fx.forEach(f=>f.t+=dt);shake=Math.max(0,shake-dt);msgT-=dt;
  if(state!=='fly')return;
  tRun+=dt;
+ // fuel: one tank shared across the whole campaign (campaign.js).
+ if(C.fuelKg>0)C.fuelKg=Math.max(0,C.fuelKg-fuelBurnRate(C,P.thr)*dt);
+ if(C.fuelKg<=BINGO_KG&&!C.bingoAnswered&&gateIx<gates.length){
+   if(!bingoOpen){bingoOpen=true;say('BINGO FUEL — 1 STRAIGHT IN · 2 PRESS ON',99);}
+ }else if(bingoOpen&&C.fuelKg>BINGO_KG)bingoOpen=false;
+ if(C.fuelKg<=0&&P.thr>0){P.thr=0;if(!bingoSaid){bingoSaid=true;say('FUEL STARVATION — GLIDE HER IN',4);}}
  if(tRun>=TIME_LIMIT&&tRun-dt<TIME_LIMIT)say('PAR TIME PASSED — time bonus lost',3);
  // score popups + smoke trails decay
  popups.forEach(p=>p.t+=dt);popups=popups.filter(p=>p.t<1.4);
@@ -140,10 +173,14 @@ function update(dt){
   if(!rol&&!mouse.down){const r=Math.atan2(-P.R[1],P.U[1]);if(Math.abs(r)<1.3)rotAll(P.F,-r*.45*dt,['R','U']);}}
  ortho();
  const brake=keys.Space&&P.grounded;
- const acc=P.thr*30-.0019*P.v*P.v-9.8*P.F[1]*.9-(P.grounded?(brake?14:1.2):0)-(gearDown&&!P.grounded?1.8:0);
+ const acc=P.thr*30*thrustMul(C)-.0019*P.v*P.v-9.8*P.F[1]*.9-(P.grounded?(brake?14:1.2):0)-(gearDown&&!P.grounded?1.8:0);
  P.v=Math.max(0,P.v+acc*dt);
- let sink=0;if(!P.grounded&&P.v<38){sink=(38-P.v)/38*28;rotAll(P.R,-dt*(38-P.v)/38*.9,['F','U']);ortho();}
- const vel=add(scl(P.F,P.v),[0,-sink,0]);
+ const STALL_V=38+stallDelta(C); // gyro-stabiliser refit lowers it by 5
+ let sink=0;if(!P.grounded&&P.v<STALL_V){sink=(STALL_V-P.v)/STALL_V*28;rotAll(P.R,-dt*(STALL_V-P.v)/STALL_V*.9,['F','U']);ortho();}
+ // crosswind + storm gusts push the airframe sideways (grounded = no drift)
+ const w=SORTIES[C.sortie].wind,wm=windMul(C);
+ const gust=SORTIES[C.sortie].weather==='storm'?Math.sin(tRun*.7)*1.5*wm:0;
+ const vel=add(add(scl(P.F,P.v),[0,-sink,0]),P.grounded?[0,0,0]:[w[0]*wm+gust,0,w[1]*wm]);
  const py=P.pos[1];P.pos=add(P.pos,scl(vel,dt));P.vs=(P.pos[1]-py)/dt;vsS=lerp(vsS,P.vs,1-Math.exp(-dt*4));
  const g=Math.max(groundAt(P.pos[0],P.pos[2]),0),agl=P.pos[1]-g;
  if(agl<2.25){const rw=onRunway(P.pos[0],P.pos[2]),lvl=Math.abs(P.R[1])<.3&&P.F[1]>-.2,water=groundAt(P.pos[0],P.pos[2])<0;
@@ -157,16 +194,32 @@ function update(dt){
  else if(agl>2.6)P.grounded=false;
  if(Math.max(Math.abs(P.pos[0]),Math.abs(P.pos[2]))>5600&&msgT<.5)say('Leaving the island — turn back!',1.5);
  if(Math.max(Math.abs(P.pos[0]),Math.abs(P.pos[2]))>7500)crash('You left the island airspace.');
- if(gateIx<gates.length){const gt=gates[gateIx];if(len(sub(P.pos,gt.p))<29){gateIx++;combo++;const pts=250+(combo-1)*50;ringsScore+=pts;score+=pts;popups.push({p:gt.p.slice(),text:'+'+pts,t:0});chime();
-   say(gateIx<gates.length?`Ring ${gateIx} / ${gates.length}  +${pts}${combo>1?'  COMBO x'+combo:''}`:'All rings cleared — land on Runway 36!',3);}}
+ if(gateIx<gates.length){const gt=gates[gateIx];if(len(sub(P.pos,gt.p))<29){gateIx++;combo++;C.maxCombo=Math.max(C.maxCombo,combo);
+   let pts=250+ringBonus(C)+(combo-1)*50,extra='';
+   const s=SORTIES[C.sortie];
+   if(s.speedBonus&&P.v>50){pts+=100;extra=' SPEED +100';sortieSpeed+=100;}
+   if(combo>=5&&awardFeat(C,'on-rails'))say('★ FEAT — ON RAILS',2);
+   if(combo>=8&&awardFeat(C,'eight-in-a-row'))say('★ FEAT — EIGHT IN A ROW',2);
+   ringsScore+=pts;score+=pts;popups.push({p:gt.p.slice(),text:'+'+pts,t:0});chime();
+   say(gateIx<gates.length?`Ring ${gateIx} / ${gates.length}  +${pts}${combo>1?'  COMBO x'+combo:''}${extra}`:'All rings cleared — land on Runway 36!',3);}}
  else if(P.grounded&&P.v<3&&onRunway(P.pos[0],P.pos[2])){state='done';fanfare();
-  const sinkS=clamp(Math.round(500+touchVs*60),0,500);
-  const centS=clamp(Math.round(500-Math.abs(touchX)*12),0,500);
-  const timeB=Math.max(0,Math.round(TIME_LIMIT-tRun))*5;
-  const nb=!best||tRun<best;
-  landBd={rings:ringsScore,sink:sinkS,centre:centS,time:timeB,total:ringsScore+sinkS+centS+timeB,touchVs,centreX:touchX,nb};
-  score=landBd.total;
-  if(nb){best=tRun;try{localStorage.setItem('sr_best',best.toFixed(2))}catch(e){}}}
+  const lr=landingRows(touchVs,touchX,Math.max(0,Math.round(TIME_LIMIT-tRun))*5);
+  const flare=flareBonus(C),si=C.sortie,s=SORTIES[si];
+  let dmg=0;
+  if(touchVs<-5){dmg=Math.round(15*damageMul(C));C.airframe=Math.max(0,C.airframe-dmg);C.incidents++;}
+  if(touchVs>-1.02&&awardFeat(C,'greaser'))say('★ FEAT — GREASER',2);
+  if(si===0)awardFeat(C,'first-light');
+  if(si===2)awardFeat(C,'storm-rider');
+  if(C.incidents===0)awardFeat(C,'clean-sheet');
+  if(C.bingoPressedOn)awardFeat(C,'press-on');
+  const total=ringsScore+lr.sink+lr.centre+lr.time+sortieSpeed+flare;
+  landBd={rings:ringsScore,ringsHit:gateIx,ringsTotal:gates.length,sink:lr.sink,centre:lr.centre,time:lr.time,
+    speed:sortieSpeed,flare,touchVs,centreX:touchX,total,sortie:si,dmg,glide:glidepath(trace)};
+  score=total;C.scores[si]=total;C.status[si]='FLOWN';
+  if(si<SORTIES.length-1)C.status[si+1]='NEXT';
+  if(si===SORTIES.length-1)awardFeat(C,'all-home');
+  if(C.airframe<=0){C.failed=true;say('AIRFRAME GROUNDED — the campaign is over',4);}
+ }
  // final-approach trace for the glidepath graph (distance to the Runway 36 threshold, height above it)
  if(gateIx>=gates.length&&!P.grounded&&state==='fly'){traceT-=dt;if(traceT<=0){traceT=.25;const d=Math.hypot(P.pos[0],P.pos[2]-RWY.hl);trace.push({d,h:Math.max(0,P.pos[1]-RWY.y)});if(trace.length>120)trace.shift();}}
  if(P.thr>.0)propA+=dt*(20+P.thr*60);else propA+=dt*P.v*.3;
@@ -179,12 +232,15 @@ const fmtT=t=>{const m=Math.floor(t/60),s=t-m*60;return `${m}:${s<10?'0':''}${s.
 // Live objects (P, keys, gates, smoke/fx arrays) are shared by reference;
 // primitives are copied into G by syncG() before every rendered frame.
 const RG={P,keys,gates,GP,HG,N,SZ,CS,RWY,groundAt,height,tcol,mini,hs,vn,fbm,slopeAt,
- state:'title',gateIx:0,camMode:0,shake:0,propA:0,gearDown:true,
+ state:'dispatch',gateIx:0,camMode:0,shake:0,propA:0,gearDown:true,
  smoke:[],fx:[],popups:[],trace:[],camPos:[0,40,620],tRun:0,score:0,combo:0,
+ weather:'clear',wind:[0,0],fuelKg:420,tankKg:420,vsS:0,sortieIx:0,
  input:{pit:0,rol:0,yaw:0},VP:I4.slice(),perf:{fps:0,calls:0,tris:0}};
 function syncG(){RG.state=state;RG.gateIx=gateIx;RG.camMode=camMode;RG.shake=shake;RG.propA=propA;
  RG.gearDown=gearDown;RG.smoke=smoke;RG.fx=fx;RG.popups=popups;RG.trace=trace;
- RG.tRun=tRun;RG.score=score;RG.combo=combo;}
+ RG.tRun=tRun;RG.score=score;RG.combo=combo;
+ RG.weather=SORTIES[C.sortie].weather;RG.wind=SORTIES[C.sortie].wind;
+ RG.fuelKg=C.fuelKg;RG.tankKg=C.tankKg;RG.vsS=vsS;RG.sortieIx=C.sortie;}
 
 
 let dpr=1;
@@ -226,17 +282,7 @@ function compass(x,y,r,hdg){const s=dpr;ctx.save();ctx.fillStyle='#070a0e';ctx.b
 function hud(t){const W=hc.width,H=hc.height,s=dpr;ctx.clearRect(0,0,W,H);if(state==='title')return;
  const pitch=Math.asin(clamp(P.F[1],-1,1)),roll=Math.atan2(-P.R[1],P.U[1]),hdg=(Math.atan2(P.F[0],-P.F[2])*DEG+360)%360;
  const kt=P.v*1.944,ft=P.pos[1]*3.281,g=Math.max(groundAt(P.pos[0],P.pos[2]),0),aglFt=(P.pos[1]-2.2-g)*3.281;
- if(camMode===1){ctx.save();ctx.strokeStyle='#15191e';ctx.lineWidth=26*s;ctx.beginPath();ctx.moveTo(W*.18,0);ctx.lineTo(W*.28,H*.72);ctx.moveTo(W*.82,0);ctx.lineTo(W*.72,H*.72);ctx.moveTo(0,H*.06);ctx.quadraticCurveTo(W/2,-H*.04,W,H*.06);ctx.stroke();
-  const gr=ctx.createLinearGradient(0,H*.68,0,H);gr.addColorStop(0,'#2a3038');gr.addColorStop(1,'#111418');ctx.fillStyle=gr;ctx.beginPath();ctx.moveTo(0,H);ctx.lineTo(0,H*.74);ctx.quadraticCurveTo(W/2,H*.64,W,H*.74);ctx.lineTo(W,H);ctx.fill();
-  // centre pedestal: twin throttle levers + gear light (a cockpit, not just a frame)
-  ctx.fillStyle='#1c222a';ctx.beginPath();ctx.moveTo(W*.455,H*.80);ctx.lineTo(W*.545,H*.80);ctx.lineTo(W*.56,H*.90);ctx.lineTo(W*.44,H*.90);ctx.fill();
-  ctx.strokeStyle='#3a424c';ctx.lineWidth=3*s;ctx.stroke();
-  for(const [lx,lc] of [[.485,'#ff5a4e'],[.515,'#ffd27a']]){ctx.strokeStyle='#565e68';ctx.lineWidth=4*s;ctx.beginPath();ctx.moveTo(W*lx,H*.885);ctx.lineTo(W*lx,H*.815);ctx.stroke();ctx.fillStyle=lc;ctx.beginPath();ctx.arc(W*lx,H*.812,5*s,0,7);ctx.fill();}
-  ctx.fillStyle=gearDown?'#4dff88':'#ff4b3a';ctx.beginPath();ctx.arc(W*.5,H*.865,4*s,0,7);ctx.fill();txt('GEAR',W*.5,H*.845,8,AMB,'center');
-  // side consoles with lit switches
-  for(const sx of [0,1]){ctx.fillStyle='#1c222a';ctx.fillRect(sx?W-58*s:8*s,H*.80,50*s,70*s);ctx.strokeStyle='#3a424c';ctx.lineWidth=2*s;ctx.strokeRect(sx?W-58*s:8*s,H*.80,50*s,70*s);
-   for(let i=0;i<3;i++){ctx.fillStyle=['#4dff88','#ffd27a','#4dff88'][i];ctx.beginPath();ctx.arc((sx?W-33*s:33*s),H*(.83+i*.05),3*s,0,7);ctx.fill();}}
-  ctx.restore();}
+ // (3D cockpit: the panel is geometry now — cockpit3d.js. No 2D frame.)
  ctx.save();ctx.lineWidth=2*s;ctx.strokeStyle=G;ctx.fillStyle=G;ctx.shadowColor='rgba(124,255,178,.9)';ctx.shadowBlur=6*s;
  const bp=proj(add(P.pos,scl(P.F,3000)));const bx=bp.w>0?bp.x:W/2,by=bp.w>0?bp.y:H*.4,ppd=H/62;
  ctx.save();ctx.beginPath();ctx.rect(bx-200*s,by-170*s,400*s,340*s);ctx.clip();ctx.translate(bx,by);ctx.rotate(-roll);ctx.textBaseline='middle';
@@ -268,22 +314,28 @@ function hud(t){const W=hc.width,H=hc.height,s=dpr;ctx.clearRect(0,0,W,H);if(sta
  // floating score popups (world-anchored, rise and fade)
  popups.forEach(p=>{const pr2=proj(p.p);if(pr2.w>0){ctx.globalAlpha=clamp(1.4-p.t,0,1);txt(p.text,pr2.x,pr2.y-p.t*40*s,26,'#ffd27a','center',true);ctx.globalAlpha=1;}});
  // info panel
- const PW=(()=>{ctx.font=`${12*dpr}px Consolas,"Courier New",monospace`;const w=ctx.measureText('GEAR UP   ·   ► Land on Runway 36 and stop').width;return Math.max(262*s,w+28*s);})();
- ctx.shadowBlur=0;ctx.fillStyle='rgba(5,14,24,.38)';ctx.fillRect(16*s,16*s,PW,110*s);ctx.strokeStyle='rgba(124,255,178,.35)';ctx.strokeRect(16*s,16*s,PW,110*s);
+ const PW=(()=>{ctx.font=`${12*dpr}px Consolas,"Courier New",monospace`;const w=ctx.measureText('SORTIE 3/3 · STORM APPROACH — FUEL 420 KG · AIRFRAME 100%').width;return Math.max(262*s,w+28*s);})();
+ ctx.shadowBlur=0;ctx.fillStyle='rgba(5,14,24,.38)';ctx.fillRect(16*s,16*s,PW,150*s);ctx.strokeStyle='rgba(124,255,178,.35)';ctx.strokeRect(16*s,16*s,PW,150*s);
  const tLeft=Math.max(0,TIME_LIMIT-tRun);
+ const srt=SORTIES[C.sortie];
  ctx.textBaseline='alphabetic';txt('SKYLINE RUNNER',28*s,36*s,12,AMB,'left',true);
  txt(`SCORE  ${score.toLocaleString('en-US')}${combo>1?'   COMBO x'+combo:''}`,28*s,58*s,16,G,'left',true);
  txt(`RINGS  ${gateIx} / ${gates.length}   TIME  ${tLeft>0?fmtT(tLeft):'+'+fmtT(tRun-TIME_LIMIT)}`,28*s,78*s,13,tLeft>0?(tLeft<30?'#ff6b5a':G):'#ff6b5a');
- txt(`GEAR ${gearDown?'DN':'UP'}   ·   ${done?'► Land on Runway 36 and stop':P.grounded&&gateIx===0?'► Take off from Runway 36':`► Fly through ring ${gateIx+1}`}`,28*s,98*s,12,'#e8f4ff');
- if(best)txt('BEST '+fmtT(best),28*s,116*s,11,G);
+ txt(`SORTIE ${C.sortie+1}/3 · ${srt.name}   ·   FUEL ${Math.round(C.fuelKg)} KG   ·   AIRFRAME ${Math.round(C.airframe)}%`,28*s,98*s,12,C.fuelKg<BINGO_KG?'#ff6b5a':'#e8f4ff');
+ ctx.fillStyle='rgba(255,255,255,.15)';ctx.fillRect(28*s,106*s,PW-56*s,7*s);
+ ctx.fillStyle=C.fuelKg<BINGO_KG?'#ff4b3a':'#ffc25a';ctx.fillRect(28*s,106*s,(PW-56*s)*Math.max(0,C.fuelKg/C.tankKg),7*s);
+ txt(`GEAR ${gearDown?'DN':'UP'}   ·   ${done?'► Land on Runway 36 and stop':P.grounded&&gateIx===0?'► Take off from Runway 36':`► Fly through ring ${gateIx+1}`}${srt.weather==='storm'?'   ·   WIND 270° 14 KT':''}`,28*s,132*s,12,'#e8f4ff');
+ if(best)txt('BEST CAMPAIGN '+best.toLocaleString('en-US'),28*s,150*s,11,G);
  txt(`${camMode?'COCKPIT':'CHASE'} VIEW · C`,W-18*s,30*s,12,G,'right');txt(muted?'SOUND OFF · M':'SOUND ON · M',W-18*s,48*s,12,G,'right');
  const wy=H*.25;
  if(state==='fly'&&!P.grounded&&P.v<42&&Math.floor(t/250)%2)txt('STALL',W/2,wy,30,'#ff4b3a','center',true);
  else if(state==='fly'&&!P.grounded&&aglFt<250&&vsS<-6&&Math.floor(t/250)%2)txt('PULL UP',W/2,wy,30,'#ff4b3a','center',true);
+ if(bingoOpen)txt('BINGO FUEL — 1 STRAIGHT IN · 2 PRESS ON',W/2,H*.32,24,'#ff6b5a','center',true);
  if(state==='fly'&&!window.__shotMode&&P.grounded&&gateIx===0&&P.v<30){txt(P.thr<.9?'HOLD SHIFT / R — FULL THROTTLE':'AT 75 KT, HOLD S TO ROTATE',W/2,H*.3,22,AMB,'center',true);}
  if(msgT>0){ctx.globalAlpha=clamp(msgT,0,1);txt(msg,W/2,H*.2,20,'#fff','center',true);ctx.globalAlpha=1;}
  ctx.restore();
- // instrument panel
+ // instrument panel (chase view only — the 3D cockpit carries its own dials)
+ if(camMode!==1){
  const r=Math.min(46*s,W*.035),gap=r*2.35,n=6,px=W/2-gap*(n-1)/2,py=H-r-24*s;
  ctx.save();ctx.fillStyle='rgba(14,18,24,.62)';const pw=gap*n+10*s;ctx.beginPath();ctx.roundRect?ctx.roundRect(W/2-pw/2,py-r-14*s,pw,r*2+34*s,14*s):ctx.rect(W/2-pw/2,py-r-14*s,pw,r*2+34*s);ctx.fill();ctx.strokeStyle='#3a4450';ctx.lineWidth=2*s;ctx.stroke();ctx.restore();
  dial(px,py,r,kt/260,'AIRSPEED',`${Math.round(kt)} KT`);
@@ -292,8 +344,9 @@ function hud(t){const W=hc.width,H=hc.height,s=dpr;ctx.clearRect(0,0,W,H);if(sta
  compass(px+gap*3,py,r,hdg);
  dial(px+gap*4,py,r,clamp(.5+vsS*196.9/4000,0,1),'VERT SPD',`${Math.round(vsS*196.9/10)*10}`,'FPM');
  dial(px+gap*5,py,r,P.thr,'ENGINE',`${Math.round(800+P.thr*1900)} RPM`,`THR ${Math.round(P.thr*100)}%`);
- // minimap
- const ms=Math.min(120*s,W*.1),mx=W-ms-18*s,my=H-ms-18*s;ctx.save();ctx.globalAlpha=.8;ctx.drawImage(mini,mx,my,ms,ms);ctx.globalAlpha=1;ctx.strokeStyle='rgba(124,255,178,.6)';ctx.lineWidth=2*s;ctx.strokeRect(mx,my,ms,ms);
+ }
+ // minimap (cockpit view: top-right, so it never covers the 3D panel's dials)
+ const ms=Math.min(120*s,W*.1),mx=W-ms-18*s,my=camMode===1?60*s:H-ms-18*s;ctx.save();ctx.globalAlpha=.8;ctx.drawImage(mini,mx,my,ms,ms);ctx.globalAlpha=1;ctx.strokeStyle='rgba(124,255,178,.6)';ctx.lineWidth=2*s;ctx.strokeRect(mx,my,ms,ms);
  const M2=(x,z)=>[mx+(x+SZ/2)/SZ*ms,my+(z+SZ/2)/SZ*ms];ctx.fillStyle='#222';const a0=M2(-40,-RWY.hl),a1=M2(40,RWY.hl);ctx.fillRect(a0[0],a0[1],Math.max(2*s,a1[0]-a0[0]),a1[1]-a0[1]);
  gates.forEach((gt,i)=>{const q=M2(gt.p[0],gt.p[2]);ctx.fillStyle=i<gateIx?'#4dff88':i===gateIx?AMB:'#fff';ctx.beginPath();ctx.arc(q[0],q[1],(i===gateIx?4:2.5)*s,0,7);ctx.fill();});
  const q=M2(P.pos[0],P.pos[2]);ctx.translate(q[0],q[1]);ctx.rotate(hdg/DEG);ctx.fillStyle='#ff4b3a';ctx.beginPath();ctx.moveTo(0,-7*s);ctx.lineTo(5*s,6*s);ctx.lineTo(0,3*s);ctx.lineTo(-5*s,6*s);ctx.fill();ctx.restore();
@@ -308,23 +361,27 @@ function hud(t){const W=hc.width,H=hc.height,s=dpr;ctx.clearRect(0,0,W,H);if(sta
   txt('G gear · C camera · Space brakes · M sound',W/2,py+160*s,14,'#e8f4ff','center');
   txt('P to resume · ENTER to restart',W/2,py+212*s,15,AMB,'center',true);
  }
- if(state==='done'&&landBd){
+ if((state==='done'||state==='campaign-done')&&landBd){
   {const vg=ctx.createLinearGradient(W*.35,0,W,0);vg.addColorStop(0,'rgba(5,10,20,0)');vg.addColorStop(1,'rgba(5,10,20,.55)');ctx.fillStyle=vg;ctx.fillRect(0,0,W,H);}
   const pw=Math.min(620*s,W*.46),px=W-pw-28*s,cx=px+pw/2,ph0=540*s;
  const ph=Math.min(ph0,H-100*s),py=Math.max(50*s,(H-ph)/2-40*s),ks=ph/ph0;
   ctx.fillStyle='rgba(8,20,36,.94)';ctx.fillRect(px,py,pw,ph);ctx.strokeStyle='rgba(124,255,178,.45)';ctx.lineWidth=2*s;ctx.strokeRect(px,py,pw,ph);
-  txt('TOUCHDOWN!',cx,py+48*s*ks,34,'#7CFFB2','center',true);
-  txt('Rally complete — Runway 36',cx,py+74*s*ks,14,AMB,'center');
+  const camp=state==='campaign-done',tot=camp?campaignTotal(C):null;
+  txt(camp?'CAMPAIGN COMPLETE!':'TOUCHDOWN!',cx,py+48*s*ks,34,'#7CFFB2','center',true);
+  txt(camp?'All 3 sorties home — Runway 36':`Sortie ${C.sortie+1} complete — ${SORTIES[C.sortie].name}`,cx,py+74*s*ks,14,AMB,'center');
   const lx=px+40*s;ctx.textBaseline='alphabetic';
-  txt(`RINGS  12 / 12`,lx,py+118*s*ks,16,G,'left',true);txt(`+${landBd.rings}`,px+pw-40*s,py+118*s*ks,16,G,'right',true);
-  txt(`LANDING — SINK ${landBd.touchVs.toFixed(1)} m/s`,lx,py+146*s*ks,16,G,'left',true);txt(`+${landBd.sink}`,px+pw-40*s,py+146*s*ks,16,G,'right',true);
-  txt(`LANDING — CENTRELINE ${Math.abs(landBd.centreX).toFixed(0)} m off`,lx,py+174*s*ks,16,G,'left',true);txt(`+${landBd.centre}`,px+pw-40*s,py+174*s*ks,16,G,'right',true);
-  txt('TIME BONUS',lx,py+202*s*ks,16,G,'left',true);txt(`+${landBd.time}`,px+pw-40*s,py+202*s*ks,16,G,'right',true);
-  ctx.strokeStyle='rgba(124,255,178,.3)';ctx.beginPath();ctx.moveTo(lx,py+216*s*ks);ctx.lineTo(px+pw-40*s,py+216*s*ks);ctx.stroke();
-  txt('TOTAL SCORE',lx,py+248*s*ks,18,AMB,'left',true);txt(String(landBd.total),px+pw-40*s,py+248*s*ks,28,'#ffd27a','right',true);
+  const rows=camp?campaignRows(C,tot):sortieRows(landBd);
+  let ry=py+118*s*ks;
+  for(const r of rows){txt(r.label,lx,ry,15,G,'left',true);txt(r.value,px+pw-40*s,ry,15,G,'right',true);ry+=27*s*ks;}
+  if(!camp&&landBd.dmg>0){txt(`HARD LANDING — AIRFRAME −${landBd.dmg}%`,lx,ry,14,'#ff6b5a','left',true);ry+=27*s*ks;}
+  ctx.strokeStyle='rgba(124,255,178,.3)';ctx.beginPath();ctx.moveTo(lx,ry);ctx.lineTo(px+pw-40*s,ry);ctx.stroke();ry+=30*s*ks;
+  txt(camp?'CAMPAIGN TOTAL':'SORTIE TOTAL',lx,ry,18,AMB,'left',true);
+  txt(String(camp?tot.total:landBd.total),px+pw-40*s,ry,28,'#ffd27a','right',true);ry+=34*s*ks;
+  const fn=featsEarned(C);
+  if(fn>0){txt(`FEATS  ${fn} / 9  ·  ${FEATS.filter(f=>C.feats[f.id]).map(f=>f.name).join(' · ')}`,cx,ry,11,AMB,'center');ry+=20*s*ks;}
   // glidepath graph: flown approach trace vs the ideal 3.0° glidepath
-  const gx0=px+40*s,gw=pw-80*s,gy0=py+268*s*ks,gh=150*s*ks;
-  txt('APPROACH TRACE — HEIGHT VS DISTANCE  ·  IDEAL 3.0°',cx,gy0+2*s*ks,11,AMB,'center');
+  const gx0=px+40*s,gw=pw-80*s,gy0=ry,gh=150*s*ks;
+  txt(`APPROACH TRACE — ${landBd.glide?landBd.glide.verdict:'NO TRACE'}  ·  IDEAL 3.0°`,cx,gy0+2*s*ks,11,AMB,'center');
   const gy1=gy0+22*s*ks,gh2=gh-22*s*ks;
   ctx.strokeStyle='rgba(232,244,255,.35)';ctx.lineWidth=1*s;ctx.strokeRect(gx0,gy1,gw,gh2);
   const X=d=>gx0+(1-clamp(d/2000,0,1))*gw,Y=h=>gy1+gh2-clamp(h/300,0,1)*gh2;
@@ -333,7 +390,7 @@ function hud(t){const W=hc.width,H=hc.height,s=dpr;ctx.clearRect(0,0,W,H);if(sta
    trace.forEach((p,i)=>{const xx=X(p.d),yy=Y(p.h);i?ctx.lineTo(xx,yy):ctx.moveTo(xx,yy);});ctx.stroke();ctx.shadowBlur=0;
    const lp=trace[trace.length-1];ctx.fillStyle='#2ee6ff';ctx.beginPath();ctx.arc(X(lp.d),Y(lp.h),4*s,0,7);ctx.fill();}
   txt('2000 m',gx0,gy1+gh2+16*s*ks,10,G,'left');txt('THRESHOLD',gx0+gw,gy1+gh2+16*s*ks,10,G,'right');txt('300 m',gx0-6*s,gy1+10*s*ks,10,G,'right');
-  txt(`TIME ${fmtT(tRun)}${landBd.nb?'  ·  NEW BEST!':best?'  ·  BEST '+fmtT(best):''}   ·   Press ENTER to fly again`,cx,py+ph-24*s*ks,14,'#e8f4ff','center');
+  txt(camp?`TIME ${fmtT(tRun)}${tot.total>best?'  ·  NEW BEST!':''}   ·   Press ENTER to fly again`:`TIME ${fmtT(tRun)}   ·   Press ENTER — ${C.failed?'campaign over':C.sortie>=2?'campaign debrief':'turnaround'}`,cx,py+ph-24*s*ks,14,'#e8f4ff','center');
  }
  if(SHOW_FPS)txt('FPS '+RG.perf.fps+' · '+RG.perf.calls+' calls · '+(RG.perf.tris/1000).toFixed(0)+'k tris',W-16*s,30*s,13,'#e8f4ff','right',true);
 }
@@ -341,10 +398,70 @@ function hud(t){const W=hc.width,H=hc.height,s=dpr;ctx.clearRect(0,0,W,H);if(sta
 // ================= loop / input =================
 const ov=document.getElementById('ov'),ovmsg=document.getElementById('ovmsg');
 function showOv(title,m){ov.querySelector('h1').textContent=title;ovmsg.textContent=m;ov.classList.remove('hide');}
-function start(){try{window.focus();hc.focus();}catch(e){}initAudio();if(AC&&AC.state==='suspended')AC.resume();reset();state='fly';ov.classList.add('hide');}
+
+// ---------- campaign overlays (dispatch board, turnaround, final card) ----------
+// Serif italic titles + monospace data, teal/amber/coral on deep navy (Phase 3).
+function ovHTML(inner){ov.querySelector('.box').innerHTML=inner;ov.classList.remove('hide');}
+const serif="font-family:Georgia,'Times New Roman',serif;font-style:italic;";
+function showDispatch(){
+  const s=SORTIES[C.sortie];
+  const rows=SORTIES.map((x,i)=>{
+    const st=C.status[i],sc=C.scores[i];
+    return `<tr><td style="color:${st==='FLOWN'?'#7CFFB2':st==='NEXT'?'#ffd27a':'#5a6b7a'}">${i+1}</td><td style="text-align:left"><b>${x.name}</b> · ${x.place}<br><span style="opacity:.75">${x.brief}</span></td><td>${st}</td><td>${st==='FLOWN'?sc.toLocaleString('en-US'):st==='NEXT'?x.par+' S PAR':'—'}</td></tr>`;}).join('');
+  ovHTML(`<h1 style="${serif}">SKYLINE RUNNER</h1>
+  <div class="sub">CAMPAIGN · 3 SORTIES · 28 RINGS · FUEL + DAMAGE · 3D COCKPIT</div>
+  <div id="ovmsg">Dispatch — ${s.name}. ${s.brief}</div>
+  <table>${rows}</table>
+  <div style="margin-top:14px;font-size:14px">FUEL <b style="color:#ffc25a">${Math.round(C.fuelKg)} KG</b> / ${C.tankKg} KG &nbsp;·&nbsp; AIRFRAME <b style="color:#7CFFB2">${Math.round(C.airframe)}%</b> &nbsp;·&nbsp; REFITS ${C.refits.length} &nbsp;·&nbsp; FEATS ${featsEarned(C)}/9${best?` &nbsp;·&nbsp; BEST ${best.toLocaleString('en-US')}`:''}</div>
+  <div class="go">Press ENTER or click — fly SORTIE ${C.sortie+1}: ${s.name}</div>`);
+  state='dispatch';
+}
+function showRefit(){
+  const cards=refitChoices.map((r,i)=>`<tr><td style="color:#ffd27a">${i+1}</td><td style="text-align:left"><b>${r.name}</b><br><span style="opacity:.75">${r.desc}</span></td></tr>`).join('');
+  ovHTML(`<h1 style="${serif}">TURNAROUND</h1>
+  <div class="sub">PAK DAR'S HANGAR · SORTIE ${C.sortie+1} DONE · PICK ONE REFIT</div>
+  <div id="ovmsg">Sortie ${C.sortie+1} total ${C.scores[C.sortie].toLocaleString('en-US')} — fuel ${Math.round(C.fuelKg)} kg, airframe ${Math.round(C.airframe)}%.</div>
+  <table>${cards}</table>
+  <div class="go">Press 1, 2 or 3 to fit it</div>`);
+  state='refit';
+}
+function pickRefit(i){
+  const r=refitChoices[i];if(!r)return;
+  applyRefit(C,r);say(`REFIT FITTED — ${r.name}`,3);
+  C.sortie++;showDispatch();
+}
+function showCampaignDone(){
+  const tot=campaignTotal(C);
+  if(tot.total>best){best=tot.total;try{localStorage.setItem('sr_best_campaign',String(best))}catch(e){}}
+  const rows=campaignRows(C,tot).map(r=>`<tr><td style="text-align:left">${r.label}</td><td>${r.value}</td></tr>`).join('');
+  const fl=FEATS.filter(f=>C.feats[f.id]).map(f=>f.name).join(' · ')||'—';
+  ovHTML(`<h1 style="${serif}">CAMPAIGN COMPLETE</h1>
+  <div class="sub">ALL 3 SORTIES HOME · RUNWAY 36</div>
+  <div id="ovmsg">Campaign total <b style="color:#ffd27a">${tot.total.toLocaleString('en-US')}</b>${tot.total>=best?' — NEW BEST!':''}</div>
+  <table>${rows}</table>
+  <div style="margin-top:14px;font-size:14px">FEATS ${featsEarned(C)}/9 — ${fl}</div>
+  <div class="go">Press ENTER or click to fly the campaign again</div>`);
+  state='campaign-done';
+}
+function bingoChoose(n){
+  if(!bingoOpen)return;
+  bingoOpen=false;C.bingoAnswered=true;awardFeat(C,'bingo-call');
+  if(n===1){C.straightIn=true;gateIx=gates.length;say('STRAIGHT IN — land now, fuel is on you',4);}
+  else{C.bingoPressedOn=true;say('PRESS ON — fuel is on you, 07',3);}
+}
+function start(){try{window.focus();hc.focus();}catch(e){}initAudio();if(AC&&AC.state==='suspended')AC.resume();
+ if(state==='refit')return; // pick a refit first (keys 1/2/3)
+ if(state==='done'){advanceAfterDebrief();return;}
+ if(state==='campaign-done'){newCampaignStart();return;}
+ if(state==='crashed'){C.fuelKg=Math.max(C.fuelKg,120);C.airframe=Math.max(50,C.airframe-10);}
+ flySortie(C.sortie);}
 ov.addEventListener('click',start);
 addEventListener('keydown',e=>{keys[e.code]=true;if(['Space','ArrowUp','ArrowDown','ArrowLeft','ArrowRight'].includes(e.code))e.preventDefault();
  if(e.code==='Enter'&&state!=='fly')start();else if(e.code==='Enter'&&state==='fly'){reset();}
+ if(e.code==='Digit1'||e.code==='Digit2'||e.code==='Digit3'){
+   if(state==='refit')pickRefit(+e.code.slice(-1)-1);
+   else if(state==='fly'&&bingoOpen)bingoChoose(+e.code.slice(-1));
+ }
  if(e.code==='KeyC')camMode^=1;if(e.code==='KeyM')muted=!muted;
  if(e.code==='KeyG'&&state==='fly'){gearDown=!gearDown;say(gearDown?'GEAR DOWN':'GEAR UP — lower it before landing!',2);}
  if(e.code==='KeyP'){if(state==='fly')state='paused';else if(state==='paused')state='fly';}});
@@ -357,10 +474,10 @@ addEventListener('wheel',e=>{if(state==='fly')P.thr=clamp(P.thr-e.deltaY*.0006,0
 function updAudio(){if(!AC)return;const on=!muted&&state==='fly',T=AC.currentTime;const f=48+P.thr*85+P.v*.25;
  eng.frequency.setTargetAtTime(f,T,.1);eng2.frequency.setTargetAtTime(f*.5,T,.1);engG.gain.setTargetAtTime(on?.04+P.thr*.08:0,T,.15);windG.gain.setTargetAtTime(on?clamp(P.v/120,0,1)*.1:0,T,.2);}
 initRenderer(RG);
-reset();let last=performance.now();
+reset();showDispatch();let last=performance.now();
 function frame(t){const dt=Math.min(.05,(t-last)/1000);last=t;
  const ft=window.__shotMode?12000:t;
- if(window.__selftest&&!window.__selftest.done){syncG();renderFrame(RG,ft);hud(ft);requestAnimationFrame(frame);return;}
+ if(window.__selftest&&!window.__selftest.done){requestAnimationFrame(frame);return;} // sim-only: the tick loop renders every 200 ticks (SwiftShader is slow)
  if(state==='paused'){syncG();renderFrame(RG,ft);hud(ft);requestAnimationFrame(frame);return;}
  if(!window.__shotMode){const st=Math.max(1,Math.ceil(dt/.01));for(let i=0;i<st;i++)update(dt/st);}
  syncG();renderFrame(RG,ft);hud(ft);updAudio();requestAnimationFrame(frame);}
@@ -375,27 +492,31 @@ window.SkyShots={stage:function(name){
  window.__shotMode=true;window.__shotStaged=true;ov.classList.add('hide');state='fly';
  const snapCam=()=>{const Ub=norm(add(scl(P.U,.55),[0,.45,0]));RG.camPos=add(add(P.pos,scl(P.F,-23)),scl(Ub,6.5));};
  if(name==='cover'){
-  reset();P.pos=[0,RWY.y+2.2,540];P.v=34;P.thr=1;gearDown=true;camMode=0;tRun=8;score=0;gateIx=0;combo=0;
+  startSortie(0);reset();P.pos=[0,RWY.y+2.2,540];P.v=34;P.thr=1;gearDown=true;camMode=0;tRun=8;score=0;gateIx=0;combo=0;
   P.vs=vsS=1.6;snapCam();say('ROTATE — PULL UP',99);
  }else if(name==='ring'){
-  reset();gateIx=5;combo=5;ringsScore=1750;score=1750;tRun=65;gearDown=false;camMode=0;
+  startSortie(0);reset();gateIx=5;combo=5;ringsScore=1750;score=1750;tRun=65;gearDown=false;camMode=0;
   const g2=gates[5];P.pos=[g2.p[0]-g2.d[0]*260,g2.p[1]-10,g2.p[2]-g2.d[2]*260];P.v=55;P.thr=.7;
   stageLookAt(g2.p[0],g2.p[1],g2.p[2]);stageBank(35);
   snapCam();popups.push({p:g2.p.slice(),text:'+500',t:.8});
   P.vs=vsS=2.4;say('RING 6 / 12 — BANK INTO THE TURN',99);
  }else if(name==='play'){
-  reset();gateIx=10;combo=10;ringsScore=4750;score=4750;tRun=130;gearDown=false;camMode=1;
+  startSortie(0);reset();gateIx=10;combo=10;ringsScore=4750;score=4750;tRun=130;gearDown=false;camMode=1;
   const g7=gates[10];P.pos=[g7.p[0]-g7.d[0]*350,g7.p[1]-15,g7.p[2]-g7.d[2]*350];P.v=60;P.thr=.65;
   stageLookAt(g7.p[0],g7.p[1],g7.p[2]);
   P.vs=vsS=.8;snapCam();say('RING 11 / 12 — ON COURSE',99);
  }else if(name==='end'){
-  reset();gateIx=12;combo=12;ringsScore=6300;tRun=151.4;gearDown=true;camMode=0;
+  // A finished campaign: all 3 sorties flown, real totals, campaign card.
+  Object.assign(C,newCampaign());
+  C.status=['FLOWN','FLOWN','FLOWN'];C.scores=[7330,6210,5840];C.fuelKg=140;
+  C.feats={'first-light':true,'on-rails':true,'greaser':true,'storm-rider':true,'clean-sheet':true,'all-home':true};
+  C.sortie=2;startSortie(2);reset();gateIx=6;combo=6;ringsScore=2250;tRun=151.4;gearDown=true;camMode=0;
   P.pos=[3.1,RWY.y+2.2,120];P.v=0;P.thr=0;P.grounded=true;stageLookAt(3.1,RWY.y+2.2,-400);P.vs=vsS=0;
   trace=[];for(let d=2000;d>=0;d-=80){const ideal=d*Math.tan(3/DEG);trace.push({d,h:Math.max(0,ideal+Math.sin(d/260)*9*(d/2000)+(d>1300?14:0))});}
   touchVs=-1.3;touchX=3.1;
-  const sinkS=clamp(Math.round(500+touchVs*60),0,500),centS=clamp(Math.round(500-Math.abs(touchX)*12),0,500),timeB=Math.max(0,Math.round(TIME_LIMIT-tRun))*5;
-  landBd={rings:ringsScore,sink:sinkS,centre:centS,time:Math.max(0,timeB),total:ringsScore+sinkS+centS+Math.max(0,timeB),touchVs,centreX:touchX,nb:true};
-  score=landBd.total;state='done';
+  const lr=landingRows(touchVs,touchX,Math.max(0,Math.round(TIME_LIMIT-tRun))*5);
+  landBd={rings:ringsScore,ringsHit:6,ringsTotal:6,sink:lr.sink,centre:lr.centre,time:lr.time,speed:0,flare:0,touchVs,centreX:touchX,total:7330,sortie:2,dmg:0,glide:glidepath(trace)};
+  score=7330;C.scores[2]=7330;state='campaign-done';
   RG.camPos=[-45,38,240];msgT=0;
  }
 }};
@@ -418,6 +539,7 @@ window.__selftest=null;
  ST.step=function(dt){
   phaseT+=dt;
   for(const k of ['KeyW','KeyS','KeyA','KeyD','KeyQ','KeyE','ShiftLeft','KeyR','KeyZ','KeyF','Space'])keys[k]=false;
+  if(bingoOpen)bingoChoose(2); // self-test always presses on past BINGO
   // proportional controllers: hold a bank/pitch angle, don't hold the key down
   const bank=()=>Math.atan2(-P.R[1],P.U[1]);
   const pitch=()=>Math.asin(clamp(P.F[1],-1,1));
@@ -441,10 +563,14 @@ window.__selftest=null;
    if(state==='crashed'){log('FAIL crashed at '+P.pos.map(v=>v.toFixed(0)).join(',')+' gateIx='+gateIx);ST.done=true;return;}
    const gt=gates[gateIx];
    const distG=len(sub(gt.p,P.pos));
-   // far: stay well above the terrain ahead; near: slow down and descend to the gate
-   // but never below 80 m above the ground directly underneath
-   const gAhead=groundAt(P.pos[0]+P.F[0]*800,P.pos[2]+P.F[2]*800),gBelow=groundAt(P.pos[0],P.pos[2]);
-   const safeAlt=distG>600?Math.max(gt.p[1]+100,gAhead+180,gBelow+180):Math.max(gt.p[1]+5,gBelow+100);
+   // terrain clearance along the approach segment to the gate (sampled): the
+   // plane must stay above the highest ground between it and the gate, then
+   // descend into the gate's own valley on final — a single gBelow floor
+   // strands it above a ridge (v8 slalom lesson: 600 s circling one gate).
+   const gBelow=groundAt(P.pos[0],P.pos[2]);
+   let maxG=gBelow;
+   for(let k=1;k<=8;k++){const fx=P.pos[0]+(gt.p[0]-P.pos[0])*k/8,fz=P.pos[2]+(gt.p[2]-P.pos[2])*k/8;maxG=Math.max(maxG,groundAt(fx,fz));}
+   const safeAlt=distG>600?Math.max(gt.p[1]+100,maxG+120,gBelow+120):Math.max(gt.p[1]+5,maxG+45);
    steer(gt.p[0],gt.p[2],safeAlt,distG>800?.75:distG>300?.55:.45);
    if(phaseT>600){log('FAIL gates timeout gateIx='+gateIx);ST.done=true;}
   }else if(phase==='land'){
@@ -459,7 +585,15 @@ window.__selftest=null;
    const tgtAlt=Math.max(gp,prof,floor);
    steer(0,P.pos[2]-200,tgtAlt,.18);
    if(P.grounded)keys.Space=true;
-   if(state==='done'){log('DONE score='+score+' landBd='+JSON.stringify(landBd));ST.done=true;}
+   if(state==='done'){
+     log('SORTIE '+(C.sortie+1)+' DONE total='+score+' fuel='+Math.round(C.fuelKg)+' airframe='+Math.round(C.airframe)+' feats='+featsEarned(C));
+     if(C.sortie>=2){log('DONE campaign total='+campaignTotal(C).total+' feats='+featsEarned(C));ST.done=true;return;}
+     // turnaround: auto-pick the first refit offered, fly the next sortie
+     const offer=refitOffer(C);applyRefit(C,offer[0]);log('REFIT '+offer[0].name);
+     C.sortie++;startSortie(C.sortie);reset();state='fly';
+     phase='takeoff';phaseT=0;gearSet=false;lastGate=0;
+     return;
+   }
    if(state==='crashed'){log('FAIL crashed at '+P.pos.map(v=>v.toFixed(0)).join(',')+' gateIx='+gateIx);ST.done=true;}
    if(phaseT>240){log('FAIL land timeout state='+state+' pos='+P.pos.map(v=>v.toFixed(0)).join(',')+' v='+P.v.toFixed(1));ST.done=true;}
   }
@@ -471,7 +605,10 @@ window.__selftest=null;
   for(let i=0;i<600&&!ST.done;i++){ST.step(1/60);update(1/60);if(state==='done'||state==='crashed')break;}
   tickN++;
   if(!ST.done){if(tickN%200===0){syncG();renderFrame(RG,performance.now());hud(performance.now());}setTimeout(tick,0);}
-  else{syncG();renderFrame(RG,performance.now());hud(performance.now());}
+  else{ // final frame + title (the DONE log returns early from ST.step, so the
+    // title setter inside step never runs for a successful campaign)
+   if(!ST.reported){ST.reported=true;document.title=(ST.log.some(l=>l.startsWith('FAIL'))?'SMOKE:FAIL ':'SMOKE:PASS ')+ST.log.join(' | ');}
+   syncG();renderFrame(RG,performance.now());hud(performance.now());}
  },500);
  start();
 })();

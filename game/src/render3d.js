@@ -12,6 +12,7 @@ import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
+import { buildCockpit, updateCockpit } from './cockpit3d.js';
 
 const SUN_DIR = new THREE.Vector3(-0.68, 0.16, -0.5).normalize(); // v6 L: low NW sun
 const FOG_COLOR = 0xf5995c;      // v6 FOG [.96,.60,.36]
@@ -195,6 +196,9 @@ export function initRenderer(RG) {
   buildRings(RG);
   buildPlane(RG);
   buildSmokePools();
+  buildRain();
+  R.cockpit = buildCockpit();
+  R.scene.add(R.cockpit.group);
 
   // Post: Render -> ACES Output -> warm grade + vignette.
   // NOTE: UnrealBloomPass is NOT in the chain — the vendored r160 pass blacks
@@ -585,6 +589,33 @@ function buildSmokePools() {
   R.fxPool = mkPool(48, true);
 }
 
+// Rain for the Storm Approach sortie: 800 streaks in a box around the eye,
+// falling and recycling. Hidden unless the weather is 'storm'.
+function buildRain() {
+  const N = 800, pos = new Float32Array(N * 3);
+  for (let i = 0; i < N; i++) {
+    pos[i * 3] = (Math.random() - .5) * 140;
+    pos[i * 3 + 1] = Math.random() * 70;
+    pos[i * 3 + 2] = (Math.random() - .5) * 140;
+  }
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  const mat = new THREE.PointsMaterial({
+    color: 0xaac4d8, size: 0.35, transparent: true, opacity: 0.55,
+    sizeAttenuation: true, depthWrite: false
+  });
+  const pts = new THREE.Points(geo, mat);
+  pts.visible = false; pts.frustumCulled = false;
+  R.scene.add(pts); R.rain = pts; R.rainVel = new Float32Array(N).fill(38 + Math.random() * 12);
+}
+
+// Rings are rebuilt per sortie (each sortie flies a different gate set).
+// Old meshes are disposed; the ring glow sprite retargets in renderFrame.
+export function rebuildRings(RG) {
+  for (const m of R.rings || []) { R.scene.remove(m); m.geometry.dispose(); m.material.dispose(); }
+  buildRings(RG);
+}
+
 // ---------- per-frame ----------
 const _eye = new THREE.Vector3(), _look = new THREE.Vector3(), _up = new THREE.Vector3();
 const _Ub = new THREE.Vector3(), _Rv = new THREE.Vector3(), _Fv = new THREE.Vector3(), _Uv = new THREE.Vector3();
@@ -603,7 +634,7 @@ export function renderFrame(RG, t) {
 
   // --- camera: v6's logic, verbatim (incl. the close title orbit) ---
   const eye = _eye, look = _look, up = _up;
-  if (state === 'title') {
+  if (state === 'title' || state === 'dispatch') {
     const a = t * .00012;
     eye.set(P.pos[0] + Math.sin(a) * 26, P.pos[1] + 7 + Math.sin(a * .7) * 2, P.pos[2] + Math.cos(a) * 26 - 6);
     look.set(P.pos[0], P.pos[1] + 1, P.pos[2] - 2); up.set(0, 1, 0);
@@ -613,13 +644,13 @@ export function renderFrame(RG, t) {
     look.copy(eye).add(F); up.copy(U);
   } else {
     const tgt = V3(P.pos).addScaledVector(F, -23).addScaledVector(_Ub, 6.5).addScaledVector(Rv, -3.5);
-    const k = state === 'crashed' ? .02 : (window.__shotMode && state === 'done' ? 0 : 1 - Math.exp(-7 / 60));
+    const k = state === 'crashed' ? .02 : (window.__shotMode && (state === 'done' || state === 'campaign-done') ? 0 : 1 - Math.exp(-7 / 60));
     RG.camPos[0] += (tgt.x - RG.camPos[0]) * k;
     RG.camPos[1] += (tgt.y - RG.camPos[1]) * k;
     RG.camPos[2] += (tgt.z - RG.camPos[2]) * k;
     eye.fromArray(RG.camPos);
     if (state === 'crashed') look.copy(V3(P.pos));
-    else if (state === 'done') look.copy(V3(P.pos)).addScaledVector(F, 30).addScaledVector(_Ub, 2).addScaledVector(Rv, 40);
+    else if (state === 'done' || state === 'campaign-done') look.copy(V3(P.pos)).addScaledVector(F, 30).addScaledVector(_Ub, 2).addScaledVector(Rv, 40);
     else look.copy(V3(P.pos)).addScaledVector(F, 30).addScaledVector(_Ub, 2);
     up.copy(_Ub);
   }
@@ -633,10 +664,48 @@ export function renderFrame(RG, t) {
   cam.position.copy(eye); cam.up.copy(up); cam.lookAt(look);
   cam.updateMatrixWorld();
 
+  // --- cockpit: nearer clip plane + the 3D panel rides the camera ---
+  const inCockpit = RG.camMode === 1 && (state === 'fly' || state === 'done' || state === 'paused');
+  const wantNear = inCockpit ? 0.5 : 1.5;
+  if (Math.abs(cam.near - wantNear) > 0.01) { cam.near = wantNear; cam.updateProjectionMatrix(); }
+  if (R.cockpit) {
+    R.cockpit.group.visible = inCockpit;
+    if (inCockpit) {
+      R.cockpit.group.position.copy(eye);
+      R.cockpit.group.quaternion.copy(cam.quaternion);
+      const pitch = Math.asin(Math.max(-1, Math.min(1, P.F[1])));
+      const roll = Math.atan2(-P.R[1], P.U[1]);
+      const hdg = (Math.atan2(P.F[0], -P.F[2]) * 180 / Math.PI + 360) % 360;
+      updateCockpit(R.cockpit, {
+        kt: P.v * 1.944, pitch, roll, ft: P.pos[1] * 3.281, hdg,
+        vsFpm: (RG.vsS || 0) * 196.9, thr: P.thr,
+        fuelKg: RG.fuelKg || 0, fuelPct: (RG.fuelKg || 0) / Math.max(1, RG.tankKg || 1),
+      }, now);
+    }
+  }
+
   // --- sun + shadows follow the aircraft (tight shadow box stays sharp) ---
   R.sun.position.copy(V3(P.pos)).addScaledVector(SUN_DIR, 900);
   R.sun.target.position.copy(V3(P.pos));
   R.sun.target.updateMatrixWorld();
+
+  // --- weather: the storm sortie dims the sun, thickens the fog, starts rain ---
+  const storm = RG.weather === 'storm';
+  R.scene.fog.density = storm ? 0.00038 : FOG_DENSITY;
+  R.sun.intensity = storm ? 1.4 : 3.0;
+  if (R.rain) {
+    R.rain.visible = storm && state !== 'title';
+    if (R.rain.visible) {
+      R.rain.position.copy(eye);
+      const pos = R.rain.geometry.attributes.position;
+      for (let i = 0; i < pos.count; i++) {
+        let y = pos.getY(i) - R.rainVel[i] * dt;
+        if (y < -5) y = 65;
+        pos.setY(i, y);
+      }
+      pos.needsUpdate = true;
+    }
+  }
 
   // --- water time ---
   R.water.material.uniforms.time.value += dt;
