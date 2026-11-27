@@ -55,10 +55,7 @@ Mouse: hold the left button and move to fly.
 
 ## Run it
 
-Double-click `game/play.html` — it works straight from the folder (the whole
-game, Three.js included, is bundled into `game/play-bundle.js` as one classic
-script, so no server is needed). Or run a local server and open the canonical
-module entry:
+Run a local server and open the canonical module entry:
 
 ```sh
 node serve.ts
@@ -66,7 +63,15 @@ node serve.ts
 
 Then open http://localhost:8080 in a desktop browser, which serves
 `game/index.html`. (`index.html` loads the game as ES modules and needs a
-server; `play.html` is the file://-playable copy of the same game.)
+server.)
+
+A file://-playable copy can be built locally with esbuild (the bundle is
+generated output, so it is not committed — run this with three@0.160.0
+installed, then double-click `game/play.html`):
+
+```sh
+npx esbuild game/src/main.js --bundle --format=iife --outfile=game/play-bundle.js
+```
 
 ## Licences
 
